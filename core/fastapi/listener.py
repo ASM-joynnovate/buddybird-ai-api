@@ -1,7 +1,6 @@
 import logging
 
 from fastapi import FastAPI, Request
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
 from starlette import status
@@ -41,13 +40,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            content=jsonable_encoder(
-                {
-                    "error_code": "COMMON__REQUEST_VALIDATION_ERROR",
-                    "message": "요청값 검증 오류가 발생했습니다.",
-                    "detail": {"body": exc.body, "errors": exc.errors()},
-                }
-            ),
+            content={
+                "error_code": "COMMON__REQUEST_VALIDATION_ERROR",
+                "message": "요청값 검증 오류가 발생했습니다.",
+            },
         )
 
     @app.exception_handler(Exception)

@@ -66,6 +66,7 @@ def test_request_validation_error_returns_error_code_and_message(
     body = response.json()
     assert body["error_code"] == "COMMON__REQUEST_VALIDATION_ERROR"
     assert body["message"] == "요청값 검증 오류가 발생했습니다."
+    assert "detail" not in body
 
 
 def test_unhandled_error_returns_error_code_and_message(client: TestClient) -> None:
