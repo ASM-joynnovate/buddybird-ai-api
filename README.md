@@ -1,26 +1,32 @@
 # buddybird-ai-api
 
 Python 3.12와 uv로 FastAPI 서버를 실행하고 기본 API를 확인하는 프로젝트다.
-현재 제공하는 API는 서버 상태 확인용 `/health`다. onset 분석 API와 AI 모델 연결은 후속 구현 대상이다.
+현재 제공하는 API는 헬스체크용 `/health`다. onset 분석 API와 AI 모델 연결은 후속 구현 대상이다.
+
+## 준비
+
+- 준비 환경: Python 3.12, uv, make
+- 명령 실행 위치: 저장소 최상위 디렉터리
+
+의존성을 설치하고 커밋 전 검사 훅을 등록한다.
+
+```sh
+make setup
+```
+
+`make setup`은 `uv sync`를 실행하고 git `core.hooksPath`를 `.githooks`로 지정한다.
+등록한 훅은 커밋할 Python 파일에 `ruff check --fix`와 `ruff format --check`를 실행한다.
 
 ## 실행
 
-- 준비 환경: Python 3.12, uv
-- 명령 실행 위치: 저장소 최상위 디렉터리
-
-`uv.lock`에 기록된 의존성을 설치한다.
+개발 서버를 실행한다. 포트 기본값은 8000이다.
 
 ```sh
-uv sync --locked
+make local
+make local port=9000
 ```
 
-개발 서버를 실행한다.
-
-```sh
-uv run --no-sync uvicorn app.main:app --reload
-```
-
-별도 터미널에서 상태 확인 API를 호출한다.
+별도 터미널에서 헬스체크 API를 호출한다.
 
 ```sh
 curl --fail http://127.0.0.1:8000/health
@@ -43,19 +49,21 @@ curl --fail http://127.0.0.1:8000/health
 
 ## 검사
 
-의존성 설치 후 코드 검사, 형식 검사, 기본 API 테스트를 실행한다.
+| 명령 | 실행 내용 |
+| --- | --- |
+| `make check` | `ruff check --fix`, `ruff format --check` |
+| `make test` | `pytest` |
 
-```sh
-uv run --no-sync ruff check .
-uv run --no-sync ruff format --check .
-uv run --no-sync pytest
-```
-
-- 기본 API 테스트: `/health`, `/docs`, `/openapi.json` 응답 확인
+- `make check`: 자동 수정 가능한 Ruff 위반을 파일에 바로 반영
+- Ruff 규칙: `pyproject.toml`의 `[tool.ruff.lint]`
+- pytest 설정: `pytest.ini`
+  - `DeprecationWarning` 숨김
+  - Starlette `TestClient`의 httpx 사용 경고: `UserWarning` 계열이라 계속 표시
 - GitHub Actions: `dev`와 `main` 대상 PR에서 `lint`, `test` 실행
+  - 작업 실패 시 Slack 알림
+  - 필요한 저장소 secret: `SLACK_WEBHOOK_URL`
 - 로컬 확인 환경: Python 3.12.13, uv 0.12.10
-- 로컬 확인 결과: Ruff 통과, 테스트 1개 통과, 실제 서버 `/health` HTTP 200
-- 알려진 경고: Starlette TestClient의 httpx 사용과 AnyIO BlockingPortal alias에서 deprecated 경고 2개 발생
+- 로컬 확인 결과: Ruff 통과, 테스트 1개 통과, `make local` 실행 후 `/health` HTTP 200
 - GitHub Actions 실행 결과: PR #1에서 `lint`, `test` 통과
 
 ## 브랜치
@@ -78,3 +86,4 @@ uv run --no-sync pytest
 - [BB-493](https://daheehyeok.atlassian.net/browse/BB-493)
 - [BB-494](https://daheehyeok.atlassian.net/browse/BB-494)
 - [BB-495](https://daheehyeok.atlassian.net/browse/BB-495)
+- [BB-498](https://daheehyeok.atlassian.net/browse/BB-498)
