@@ -63,7 +63,7 @@ classmethod-decorators = ["classmethod", "pydantic.model_validator", "pydantic.f
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["app", "tests"]
+files = ["app", "core", "tests"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
