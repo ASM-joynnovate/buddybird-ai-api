@@ -56,7 +56,7 @@ uv run --no-sync pytest
 - 로컬 확인 환경: Python 3.12.13, uv 0.12.10
 - 로컬 확인 결과: Ruff 통과, 테스트 1개 통과, 실제 서버 `/health` HTTP 200
 - 알려진 경고: Starlette TestClient의 httpx 사용과 AnyIO BlockingPortal alias에서 deprecated 경고 2개 발생
-- GitHub Actions 실행 결과: 코드 반영 전이므로 미확인
+- GitHub Actions 실행 결과: PR #1에서 `lint`, `test` 통과
 
 ## 브랜치
 
