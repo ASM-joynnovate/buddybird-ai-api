@@ -17,6 +17,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync mypy
 
       - name: notify lint failure
         if: failure()
