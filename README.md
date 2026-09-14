@@ -51,19 +51,24 @@ curl --fail http://127.0.0.1:8000/health
 
 | 명령 | 실행 내용 |
 | --- | --- |
-| `make check` | `ruff check --fix`, `ruff format --check` |
+| `make check` | `ruff check --fix`, `ruff format --check`, `mypy` |
 | `make test` | `pytest` |
 
 - `make check`: 자동 수정 가능한 Ruff 위반을 파일에 바로 반영
 - Ruff 규칙: `pyproject.toml`의 `[tool.ruff.lint]`
+- mypy 설정: `pyproject.toml`의 `[tool.mypy]`
+  - strict 모드
+  - pydantic 플러그인
+  - 검사 대상: `app`, `tests`
 - pytest 설정: `pytest.ini`
   - `DeprecationWarning` 숨김
   - Starlette `TestClient`의 httpx 사용 경고: `UserWarning` 계열이라 계속 표시
 - GitHub Actions: `dev`와 `main` 대상 PR에서 `lint`, `test` 실행
+  - `lint` 작업: `ruff check`, `ruff format --check`, `mypy`
   - 작업 실패 시 Slack 알림
   - 필요한 저장소 secret: `SLACK_WEBHOOK_URL`
 - 로컬 확인 환경: Python 3.12.13, uv 0.12.10
-- 로컬 확인 결과: Ruff 통과, 테스트 1개 통과, `make local` 실행 후 `/health` HTTP 200
+- 로컬 확인 결과: Ruff 통과, mypy 통과, 테스트 1개 통과, `make local` 실행 후 `/health` HTTP 200
 - GitHub Actions 실행 결과: PR #1에서 `lint`, `test` 통과
 
 ## 브랜치
