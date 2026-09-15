@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 logging.basicConfig(
@@ -17,7 +18,7 @@ TIMEZONE_SCHEDULES = {
 }
 
 
-def get_users_by_timezone(timezone: str) -> list[dict]:
+def get_users_by_timezone(timezone: str) -> list[dict[str, Any]]:
     """
     타임존별 사용자 조회.
 
@@ -38,7 +39,7 @@ def get_users_by_timezone(timezone: str) -> list[dict]:
     return []
 
 
-def analyze_user(user_id: str, user_data: dict) -> dict:
+def analyze_user(user_id: str, user_data: dict[str, Any]) -> dict[str, Any]:
     """
     단일 사용자 분석 수행.
 
@@ -55,7 +56,7 @@ def analyze_user(user_id: str, user_data: dict) -> dict:
     }
 
 
-def batch_by_timezone(timezone: str) -> dict:
+def batch_by_timezone(timezone: str) -> dict[str, Any]:
     """
     타임존별 배치 실행.
 
@@ -69,7 +70,7 @@ def batch_by_timezone(timezone: str) -> dict:
     logger.info(f"Batch started for {timezone} ({start_time})")
 
     users = get_users_by_timezone(timezone)
-    results = []
+    results: list[dict[str, Any]] = []
 
     for user in users:
         try:
