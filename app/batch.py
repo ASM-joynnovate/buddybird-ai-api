@@ -10,11 +10,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# cron 시각은 각 타임존의 현지 시각이며 aws-infra 스케줄과 같은 값이다.
 TIMEZONE_SCHEDULES = {
-    "Asia/Seoul": {"cron": "cron(0 20 * * ? *)", "name": "한국"},
-    "America/New_York": {"cron": "cron(0 3 * * ? *)", "name": "미국 동부"},
+    "Asia/Seoul": {"cron": "cron(0 0 * * ? *)", "name": "한국"},
+    "America/New_York": {"cron": "cron(0 0 * * ? *)", "name": "미국 동부"},
     "America/Los_Angeles": {"cron": "cron(0 0 * * ? *)", "name": "미국 서부"},
-    "Europe/London": {"cron": "cron(0 8 * * ? *)", "name": "유럽"},
+    "Europe/London": {"cron": "cron(0 0 * * ? *)", "name": "유럽"},
 }
 
 
@@ -39,7 +40,9 @@ def get_users_by_timezone(timezone: str) -> list[dict[str, Any]]:
     return []
 
 
-def analyze_user(user_id: str, user_data: dict[str, Any]) -> dict[str, Any]:
+def analyze_user(
+    user_id: str, user_data: dict[str, Any], timezone: str
+) -> dict[str, Any]:
     """
     단일 사용자 분석 수행.
 
@@ -52,7 +55,7 @@ def analyze_user(user_id: str, user_data: dict[str, Any]) -> dict[str, Any]:
     return {
         "user_id": user_id,
         "status": "pending",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(ZoneInfo(timezone)).isoformat(),
     }
 
 
@@ -74,7 +77,7 @@ def batch_by_timezone(timezone: str) -> dict[str, Any]:
 
     for user in users:
         try:
-            result = analyze_user(user["id"], user)
+            result = analyze_user(user["id"], user, timezone)
             results.append(result)
         except Exception as e:
             logger.exception(f"Error analyzing user {user['id']}")
@@ -94,8 +97,9 @@ def main(timezone: str = "Asia/Seoul") -> None:
     """
     배치 진입점.
 
-    EventBridge Scheduler에서 호출:
-    python -m app.batch --timezone Asia/Seoul
+    EventBridge Scheduler가 컨테이너에 TIMEZONE을 넘기면
+    Dockerfile이 그 값을 위치 인자로 전달한다:
+    python -m app.batch Asia/Seoul
     """
     result = batch_by_timezone(timezone)
     logger.info(f"Batch result: {result}")
@@ -104,8 +108,6 @@ def main(timezone: str = "Asia/Seoul") -> None:
 
 if __name__ == "__main__":
     import sys
-
-    logging.basicConfig(level=logging.INFO)
 
     timezone = "Asia/Seoul"
     if len(sys.argv) > 1:
