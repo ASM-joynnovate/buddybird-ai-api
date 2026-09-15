@@ -13,5 +13,7 @@ RUN pip install --no-cache-dir uv && \
 COPY app ./app
 
 ENV PYTHONUNBUFFERED=1
+ENV MODE=web
+ENV TIMEZONE=Asia/Seoul
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD sh -c 'if [ "$MODE" = "batch" ]; then python -m app.batch "$TIMEZONE"; else python -m uvicorn app.main:app --host 0.0.0.0 --port 8000; fi'
