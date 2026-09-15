@@ -95,8 +95,9 @@ def main(timezone: str = "Asia/Seoul") -> None:
     """
     배치 진입점.
 
-    EventBridge Scheduler에서 호출:
-    python -m app.batch --timezone Asia/Seoul
+    EventBridge Scheduler가 컨테이너에 TIMEZONE을 넘기면
+    Dockerfile이 그 값을 위치 인자로 전달한다:
+    python -m app.batch Asia/Seoul
     """
     result = batch_by_timezone(timezone)
     logger.info(f"Batch result: {result}")
