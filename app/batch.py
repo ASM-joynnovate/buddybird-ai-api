@@ -109,8 +109,6 @@ def main(timezone: str = "Asia/Seoul") -> None:
 if __name__ == "__main__":
     import sys
 
-    logging.basicConfig(level=logging.INFO)
-
     timezone = "Asia/Seoul"
     if len(sys.argv) > 1:
         timezone = sys.argv[1]
