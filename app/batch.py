@@ -40,7 +40,9 @@ def get_users_by_timezone(timezone: str) -> list[dict[str, Any]]:
     return []
 
 
-def analyze_user(user_id: str, user_data: dict[str, Any]) -> dict[str, Any]:
+def analyze_user(
+    user_id: str, user_data: dict[str, Any], timezone: str
+) -> dict[str, Any]:
     """
     단일 사용자 분석 수행.
 
@@ -53,7 +55,7 @@ def analyze_user(user_id: str, user_data: dict[str, Any]) -> dict[str, Any]:
     return {
         "user_id": user_id,
         "status": "pending",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(ZoneInfo(timezone)).isoformat(),
     }
 
 
@@ -75,7 +77,7 @@ def batch_by_timezone(timezone: str) -> dict[str, Any]:
 
     for user in users:
         try:
-            result = analyze_user(user["id"], user)
+            result = analyze_user(user["id"], user, timezone)
             results.append(result)
         except Exception as e:
             logger.exception(f"Error analyzing user {user['id']}")
