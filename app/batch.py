@@ -10,11 +10,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# cron 시각은 각 타임존의 현지 시각이며 aws-infra 스케줄과 같은 값이다.
 TIMEZONE_SCHEDULES = {
-    "Asia/Seoul": {"cron": "cron(0 20 * * ? *)", "name": "한국"},
-    "America/New_York": {"cron": "cron(0 3 * * ? *)", "name": "미국 동부"},
+    "Asia/Seoul": {"cron": "cron(0 0 * * ? *)", "name": "한국"},
+    "America/New_York": {"cron": "cron(0 0 * * ? *)", "name": "미국 동부"},
     "America/Los_Angeles": {"cron": "cron(0 0 * * ? *)", "name": "미국 서부"},
-    "Europe/London": {"cron": "cron(0 8 * * ? *)", "name": "유럽"},
+    "Europe/London": {"cron": "cron(0 0 * * ? *)", "name": "유럽"},
 }
 
 
