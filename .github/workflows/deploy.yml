@@ -1,0 +1,38 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "ECR 이미지 태그. 비우면 커밋 SHA 사용, 첫 배포는 prod-bootstrap"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+
+      - name: login to amazon ecr
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: build, tag, and push image to amazon ecr
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: jn-buddybird-ai-api
+          IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+        run: |
+          docker build --platform linux/arm64 -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
