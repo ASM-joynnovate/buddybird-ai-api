@@ -7,6 +7,7 @@ dependencies = [
     "fastapi[standard]",
     "asyncpg>=0.31.0",
     "psycopg2-binary>=2.9.12",
+    "numpy>=2.5.3",
 ]
 
 [dependency-groups]
