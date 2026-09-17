@@ -5,8 +5,7 @@ description = "BuddyBird vocal analysis API"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi[standard]",
-    "asyncpg>=0.31.0",
-    "psycopg2-binary>=2.9.12",
+    "numpy>=2.5.3",
 ]
 
 [dependency-groups]
