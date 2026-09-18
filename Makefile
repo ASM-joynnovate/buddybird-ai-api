@@ -1,4 +1,4 @@
-.PHONY: setup test local check
+.PHONY: setup test local health proto check
 
 
 setup:
@@ -9,11 +9,16 @@ test:
 	uv run pytest $(ARGS)
 
 local:
-	@if [ -n "$(port)" ]; then \
-		uv run fastapi dev --port $(port) app/main.py; \
-	else \
-		uv run fastapi dev --port 8000 app/main.py; \
-	fi
+	GRPC_PORT=$(or $(port),50051) uv run python -m app.main
+
+health:
+	uv run python -m core.grpc.healthcheck --target 127.0.0.1:$(or $(port),50051)
+
+proto:
+	uv run python -m grpc_tools.protoc -I proto \
+		--python_out=. --grpc_python_out=. \
+		--mypy_out=. --mypy_grpc_out=. \
+		proto/buddybird/ai/v1/onset.proto
 
 check:
 	uv run ruff check --fix

@@ -18,6 +18,10 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync mypy
+      - name: check generated proto code
+        run: |
+          make proto
+          test -z "$(git status --porcelain -- buddybird)"
 
       - name: notify lint failure
         if: failure()

@@ -1,7 +1,7 @@
 # buddybird-ai-api
 
-Python 3.12와 uv로 FastAPI 서버를 실행하고 기본 API를 확인하는 프로젝트다.
-현재 제공하는 API는 헬스체크용 `/api/healthz`다. onset 분석 API와 AI 모델 연결은 후속 구현 대상이다.
+Python 3.12와 uv로 gRPC 서버를 실행하고 헬스체크를 확인하는 프로젝트다.
+현재 제공하는 서비스는 gRPC 표준 헬스체크 `grpc.health.v1.Health`다. onset 분석 RPC는 proto 인터페이스 정의만 작성했고, 서버 구현과 AI 모델 연결은 후속 구현 대상이다.
 
 ## 준비
 
@@ -19,66 +19,130 @@ make setup
 
 ## 실행
 
-개발 서버를 실행한다. 포트 기본값은 8000이다.
+개발 서버를 실행한다. 포트 기본값은 50051이다.
 
 ```sh
 make local
-make local port=9000
+make local port=50052
 ```
 
-별도 터미널에서 헬스체크 API를 호출한다.
+별도 터미널에서 헬스체크를 호출한다. 서버와 같은 포트를 지정한다.
 
 ```sh
-curl --fail http://127.0.0.1:8000/api/healthz
+make health
+make health port=50052
 ```
 
-정상 응답은 HTTP 200이다.
+서버가 요청을 받을 수 있으면 `SERVING`을 출력한다.
 
-```json
-{"status":"ok"}
-```
-
-| 경로 | 용도 |
+| 항목 | 값 |
 | --- | --- |
-| `/api/healthz` | 서버 응답 확인 |
-| `/docs` | 대화형 API 문서 |
-| `/openapi.json` | OpenAPI 명세 |
+| 헬스체크 서비스 | `grpc.health.v1.Health` |
+| 전체 상태 서비스 이름 | 빈 문자열 |
+| 포트 환경 변수 | `GRPC_PORT`, 기본값 50051 |
+| 로그 수준 환경 변수 | `LOG_LEVEL`, 기본값 `INFO` |
 
-`/api/healthz`는 분석 준비 상태나 외부 서비스 연결 상태를 검사하지 않는다.
-개발 서버 종료는 `Ctrl+C`를 사용한다.
+- 헬스체크 검사 범위: 서버 응답만 확인, 분석 준비 상태와 외부 서비스 연결 상태는 미검사
+- 서버 종료: `Ctrl+C`
+  - `SIGINT`, `SIGTERM` 수신 시 헬스체크 상태 `NOT_SERVING`으로 변경
+  - 처리 중인 요청을 최대 10초 기다린 뒤 종료
 
-## 응답 형식
+### 헬스체크 명령
 
-buddybird-api와 같은 경로 규약과 응답 형식을 사용한다.
+컨테이너 헬스체크에서도 같은 명령을 사용한다.
 
-- 경로: 모든 경로에 `/api` prefix
-- 도메인 라우터 경로: `/api/v1/<도메인>`
-
-성공 응답은 `BaseResponse` 형식이다.
-
-```json
-{"message": "", "data": null, "meta": null}
+```sh
+python -m core.grpc.healthcheck --target 127.0.0.1:50051
 ```
 
-`/api/healthz`는 `BaseResponse` 없이 `{"status":"ok"}`를 반환한다.
+| 옵션 | 기본값 |
+| --- | --- |
+| `--target` | `127.0.0.1:<GRPC_PORT>` |
+| `--service` | 빈 문자열 |
+| `--timeout` | 3초 |
 
-실패 응답은 전역 예외 핸들러가 `error_code`와 `message` 형식으로 반환한다.
+- 종료 코드 0: `SERVING`
+- 종료 코드 1: 연결 실패, 제한 시간 초과, `SERVING` 외 상태
 
-```json
-{"error_code": "COMMON__RESOURCE_NOT_FOUND", "message": "요청한 리소스를 찾을 수 없습니다."}
-```
+## 오류 응답
 
-| 상황 | HTTP 상태 | `error_code` |
+`ErrorInterceptor`가 `CustomError`와 처리하지 않은 예외를 gRPC 상태로 변환한다.
+
+- 상태 메시지: 예외의 `message`
+- 상세 정보: `google.rpc.ErrorInfo` 1개
+  - `reason`: 예외의 `error_code`
+  - `domain`: `buddybird-ai-api`
+- 예외의 `detail`: 응답에 미포함
+
+| 상황 | gRPC 상태 | `reason` |
 | --- | --- | --- |
-| `CustomError` 발생 | 예외에 지정한 값, 기본값 400 | 예외에 지정한 값, 기본값 `COMMON__BAD_REQUEST` |
-| 요청값 검증 실패 | 422 | `COMMON__REQUEST_VALIDATION_ERROR` |
-| 반환값 검증 실패 | 422 | `COMMON__RESPONSE_VALIDATION_ERROR` |
-| 처리하지 않은 예외 | 500 | `COMMON__INTERNAL_SERVER_ERROR` |
+| `CustomError` code 400, 422 | `INVALID_ARGUMENT` | 예외에 지정한 값 |
+| `CustomError` code 404 | `NOT_FOUND` | 예외에 지정한 값 |
+| `CustomError` code 500 | `INTERNAL` | 예외에 지정한 값 |
+| `CustomError` 그 외 code | - 500 이상: `INTERNAL`<br>- 500 미만: `INVALID_ARGUMENT` | 예외에 지정한 값 |
+| 처리하지 않은 예외 | `INTERNAL` | `COMMON__INTERNAL_SERVER_ERROR` |
+
+처리하지 않은 예외는 서버 로그에 예외 내용을 기록한다.
+응답 메시지는 `서버 내부 오류가 발생했습니다. 관리자에게 문의해주세요.`로 고정한다.
+
+클라이언트는 `ErrorInfo`를 아래 방식으로 읽는다.
+
+```python
+from google.rpc import error_details_pb2
+from grpc_status import rpc_status
+
+status = rpc_status.from_call(error)
+info = error_details_pb2.ErrorInfo()
+status.details[0].Unpack(info)
+```
 
 - 새 에러: `CustomError` 상속 후 `code`, `error_code`, `message` 정의
 - `error_code` 형식: `도메인__이유`
-- 실패 응답의 `detail`: 미포함, buddybird-api 운영 환경 응답 기준
-- 없는 경로의 404 응답: FastAPI 기본 형식 `{"detail":"Not Found"}` 유지, buddybird-api와 같은 동작
+
+## proto
+
+| 항목 | 값 |
+| --- | --- |
+| 인터페이스 정의 원본 | `proto/buddybird/ai/v1/onset.proto` |
+| 생성 코드 | `buddybird/ai/v1/`, git에 커밋 |
+| 생성 명령 | `make proto` |
+| 생성 코드 요구 버전 | grpcio 1.84.0 이상, protobuf 7.35.1 이상 |
+
+- 생성 코드 검사: Ruff 검사 제외, mypy는 함께 생성한 `.pyi` 사용
+- CI: `lint` 작업에서 `make proto` 실행 후 `buddybird/` 변경이 있으면 실패
+- 필드 규칙: 필드 추가만 허용, 기존 필드 번호의 삭제와 변경 금지
+
+proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커밋한다.
+
+### OnsetService
+
+`AnalyzeSession`은 세션 하나에 여는 양방향 스트림이다.
+
+| 요청 메시지 | 필드 | 값 |
+| --- | --- | --- |
+| `SessionStart` | `session_id` | `audio_captures.client_session_id` |
+| `CaptureInput` | `capture_id` | `audio_captures.client_capture_id` |
+| `CaptureInput` | `s3_key` | 데이터 버킷의 `audio_capture/` 객체 key |
+| `CaptureInput` | `captured_at` | `audio_captures.captured_at` |
+
+- 첫 메시지: `start`
+- 이후 메시지: `captured_at` 순서의 `capture`
+- 응답: 캡처마다 `chirp_count`, `window_chirp_count`, `is_emergency` 1개
+- 시간 창 상태: 스트림이 열려 있는 동안만 유지, 스트림이 끊기면 초기화
+- 서버 등록: 미구현, 호출 시 gRPC 기본 응답 `UNIMPLEMENTED`
+
+### buddybird-api 공유
+
+1. ai-api에서 proto를 수정하고 `make proto` 결과와 함께 PR을 merge한다.
+2. `dev` merge 커밋에 `proto-v<버전>` 태그를 생성한다.
+3. buddybird-api에 proto 파일을 복사하고 파일 첫 줄 주석에 기준 태그를 작성한다.
+4. buddybird-api에서 코드를 생성해 커밋한다.
+
+## 컨테이너
+
+- 실행 명령: `python -m app.main`
+- 노출 포트: 50051
+- 이미지 아키텍처: ARM64, `deploy` 워크플로에서 빌드
 
 ## 검사
 
@@ -91,18 +155,19 @@ buddybird-api와 같은 경로 규약과 응답 형식을 사용한다.
 - Ruff 규칙: `pyproject.toml`의 `[tool.ruff.lint]`
 - mypy 설정: `pyproject.toml`의 `[tool.mypy]`
   - strict 모드
-  - pydantic 플러그인
   - 검사 대상: `app`, `core`, `tests`
+  - 타입 스텁이 없는 `google.rpc`, `grpc_health`, `grpc_status`: import 검사 제외
 - pytest 설정: `pytest.ini`
   - `DeprecationWarning` 숨김
-  - Starlette `TestClient`의 httpx 사용 경고: `UserWarning` 계열이라 계속 표시
 - GitHub Actions: `dev`와 `main` 대상 PR에서 `lint`, `test` 실행
-  - `lint` 작업: `ruff check`, `ruff format --check`, `mypy`
+  - `lint` 작업: `ruff check`, `ruff format --check`, `mypy`, proto 생성 코드 검사
   - 작업 실패 시 Slack 알림
   - 필요한 저장소 secret: `SLACK_WEBHOOK_URL`
-- 로컬 확인 환경: Python 3.12.13, uv 0.12.10
-- 로컬 확인 결과: Ruff 통과, mypy 통과, 테스트 4개 통과, `make local` 실행 후 `/api/healthz` HTTP 200
-- GitHub Actions 실행 결과: PR #1에서 `lint`, `test` 통과
+- 로컬 확인 환경: Python 3.12.13, uv 0.12.3
+- 로컬 확인 결과
+  - Ruff 통과, mypy 통과, 테스트 45개 통과
+  - `make local` 실행 후 `make health` 결과 `SERVING`
+  - `SIGTERM` 수신 후 서버 종료
 
 ## 브랜치
 
@@ -121,6 +186,7 @@ buddybird-api와 같은 경로 규약과 응답 형식을 사용한다.
 
 ## 관련 작업
 
+- [BB-458](https://daheehyeok.atlassian.net/browse/BB-458)
 - [BB-493](https://daheehyeok.atlassian.net/browse/BB-493)
 - [BB-494](https://daheehyeok.atlassian.net/browse/BB-494)
 - [BB-495](https://daheehyeok.atlassian.net/browse/BB-495)
