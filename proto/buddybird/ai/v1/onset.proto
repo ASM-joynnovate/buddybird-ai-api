@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package buddybird.ai.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// 세션 하나의 캡처를 받아 캡처마다 onset 분석 결과를 돌려준다.
+service OnsetService {
+  // 첫 메시지는 start, 이후 메시지는 captured_at 순서의 capture다.
+  // 시간 창 상태는 스트림이 열려 있는 동안만 유지한다.
+  rpc AnalyzeSession(stream AnalyzeSessionRequest) returns (stream AnalyzeSessionResponse);
+}
+
+message AnalyzeSessionRequest {
+  oneof message {
+    SessionStart start = 1;
+    CaptureInput capture = 2;
+  }
+}
+
+message SessionStart {
+  // audio_captures.client_session_id
+  string session_id = 1;
+}
+
+message CaptureInput {
+  // audio_captures.client_capture_id
+  string capture_id = 1;
+  // 데이터 버킷의 audio_capture/ 객체 key
+  string s3_key = 2;
+  // audio_captures.captured_at
+  google.protobuf.Timestamp captured_at = 3;
+}
+
+message AnalyzeSessionResponse {
+  string capture_id = 1;
+  // 이 캡처에서 음역대 안에 든 짹 수
+  int32 chirp_count = 2;
+  // 이 캡처까지 최근 시간 창 안에 든 음역대 안 짹 수
+  int32 window_chirp_count = 3;
+  // window_chirp_count가 위급 기준 이상이면 true
+  bool is_emergency = 4;
+}

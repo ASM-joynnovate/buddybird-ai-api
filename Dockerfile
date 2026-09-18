@@ -14,7 +14,10 @@ RUN uv sync --locked --no-dev --no-install-project
 
 COPY app ./app
 COPY core ./core
+COPY buddybird ./buddybird
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 50051
+
+CMD ["python", "-m", "app.main"]
