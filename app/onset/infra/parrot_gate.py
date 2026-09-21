@@ -6,8 +6,12 @@ import asyncio
 import logging
 import threading
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from onnxruntime import InferenceSession
 
 logger = logging.getLogger(__name__)
 
@@ -30,28 +34,32 @@ class GateResult:
     is_parrot: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _Models:
+    bundle: dict[str, Any]
+    session: InferenceSession
+
+
 class ParrotGate:
     """싱글턴으로 사용한다. warm 시작 시 preload()를 호출해 cold start 지연을 없앤다."""
 
     def __init__(self, revision: str = _GATE_REVISION) -> None:
         self._revision = revision
-        self._bundle: dict | None = None
-        self._session = None
+        self._models: _Models | None = None
         self._lock = threading.Lock()
 
     def preload(self) -> None:
         """서버 시작 시 모델을 미리 로드한다."""
         self._ensure_loaded()
 
-    def _ensure_loaded(self) -> None:
-        if self._bundle is not None:
-            return
-        with self._lock:
-            if self._bundle is not None:
-                return
-            self._load()
+    def _ensure_loaded(self) -> _Models:
+        if self._models is None:
+            with self._lock:
+                if self._models is None:
+                    self._models = self._load()
+        return self._models
 
-    def _load(self) -> None:
+    def _load(self) -> _Models:
         import joblib
         import onnxruntime as ort
         from huggingface_hub import hf_hub_download
@@ -61,17 +69,18 @@ class ParrotGate:
             self._revision,
         )
         gate_path = hf_hub_download(_GATE_REPO, _GATE_FILE, revision=self._revision)
-        self._bundle = joblib.load(gate_path)
-        logger.info("Gate loaded (threshold=%.4f)", self._bundle["threshold"])
+        bundle = joblib.load(gate_path)
+        logger.info("Gate loaded (threshold=%.4f)", bundle["threshold"])
 
         perch_path = hf_hub_download(_PERCH_REPO, _PERCH_FILE)
-        self._session = ort.InferenceSession(str(perch_path))
+        session = ort.InferenceSession(str(perch_path))
         logger.info("Perch ONNX loaded")
+        return _Models(bundle=bundle, session=session)
 
     def predict(self, audio: np.ndarray, sr: int) -> GateResult:
-        self._ensure_loaded()
-        emb = self._embed(audio, sr)
-        bundle = self._bundle
+        models = self._ensure_loaded()
+        emb = self._embed(models.session, audio, sr)
+        bundle = models.bundle
         prob = float(bundle["pipeline"].predict_proba(emb.reshape(1, -1))[0, 1])
         return GateResult(probability=prob, is_parrot=prob >= bundle["threshold"])
 
@@ -79,7 +88,9 @@ class ParrotGate:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.predict, audio, sr)
 
-    def _embed(self, audio: np.ndarray, sr: int) -> np.ndarray:
+    def _embed(
+        self, session: InferenceSession, audio: np.ndarray, sr: int
+    ) -> np.ndarray:
         import librosa
 
         audio = np.asarray(audio, dtype=np.float32)
@@ -92,9 +103,9 @@ class ParrotGate:
             audio = audio * (_TARGET_PEAK / peak)
 
         frames = self._frames(audio)
-        input_name = self._session.get_inputs()[0].name
-        embeddings = self._session.run(["embedding"], {input_name: frames})[0]
-        return embeddings.mean(axis=0).astype(np.float32)
+        input_name = session.get_inputs()[0].name
+        embeddings = session.run(["embedding"], {input_name: frames})[0]
+        return np.asarray(embeddings.mean(axis=0), dtype=np.float32)
 
     def _frames(self, audio: np.ndarray) -> np.ndarray:
         window_len = round(_WINDOW_S * _SR)

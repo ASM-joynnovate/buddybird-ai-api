@@ -45,7 +45,9 @@ class OnsetServicer(onset_pb2_grpc.OnsetServiceServicer):
     async def AnalyzeSession(  # noqa: N802
         self,
         request_iterator: AsyncIterator[onset_pb2.AnalyzeSessionRequest],
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[
+            onset_pb2.AnalyzeSessionRequest, onset_pb2.AnalyzeSessionResponse
+        ],
     ) -> AsyncIterator[onset_pb2.AnalyzeSessionResponse]:
         state = _SessionState()
 
