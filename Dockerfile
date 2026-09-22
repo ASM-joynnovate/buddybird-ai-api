@@ -3,7 +3,8 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_DOWNLOADS=never \
+    HF_HOME=/app/models
 
 WORKDIR /app
 
@@ -17,6 +18,10 @@ COPY core ./core
 COPY buddybird ./buddybird
 
 ENV PATH="/app/.venv/bin:$PATH"
+
+# 판정 모델을 이미지에 넣고, 실행 중에는 HuggingFace에 접속하지 않는다.
+RUN python -m app.onset.infra.parrot_gate
+ENV HF_HUB_OFFLINE=1
 
 EXPOSE 50051
 

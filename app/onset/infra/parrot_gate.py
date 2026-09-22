@@ -35,6 +35,18 @@ class GateResult:
     is_parrot: bool
 
 
+def download_models(revision: str = _GATE_REVISION) -> tuple[str, str]:
+    """gate와 Perch 파일을 HuggingFace 캐시에 받고 경로를 돌려준다.
+
+    Docker 이미지 빌드 때 실행해 모델을 이미지에 넣는다. 캐시에 있으면 다시 받지 않는다.
+    """
+    from huggingface_hub import hf_hub_download
+
+    gate_path = hf_hub_download(_GATE_REPO, _GATE_FILE, revision=revision)
+    perch_path = hf_hub_download(_PERCH_REPO, _PERCH_FILE, revision=_PERCH_REVISION)
+    return gate_path, perch_path
+
+
 @dataclass(frozen=True, slots=True)
 class _Models:
     bundle: dict[str, Any]
@@ -63,18 +75,13 @@ class ParrotGate:
     def _load(self) -> _Models:
         import joblib
         import onnxruntime as ort
-        from huggingface_hub import hf_hub_download
 
-        logger.info(
-            "Loading parrot-sound-gate from HuggingFace (revision=%s)...",
-            self._revision,
-        )
-        gate_path = hf_hub_download(_GATE_REPO, _GATE_FILE, revision=self._revision)
+        logger.info("Loading parrot-sound-gate (revision=%s)...", self._revision)
+        gate_path, perch_path = download_models(self._revision)
         bundle = joblib.load(gate_path)
         logger.info("Gate loaded (threshold=%.4f)", bundle["threshold"])
 
-        perch_path = hf_hub_download(_PERCH_REPO, _PERCH_FILE, revision=_PERCH_REVISION)
-        session = ort.InferenceSession(str(perch_path))
+        session = ort.InferenceSession(perch_path)
         logger.info("Perch ONNX loaded")
         return _Models(bundle=bundle, session=session)
 
@@ -117,3 +124,7 @@ class ParrotGate:
         if starts[-1] != n - window_len:
             starts.append(n - window_len)
         return np.stack([audio[s : s + window_len] for s in starts], axis=0)
+
+
+if __name__ == "__main__":
+    download_models()

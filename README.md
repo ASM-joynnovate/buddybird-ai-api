@@ -1,7 +1,7 @@
 # buddybird-ai-api
 
 Python 3.12와 uv로 gRPC 서버를 실행하고 헬스체크를 확인하는 프로젝트다.
-현재 제공하는 서비스는 gRPC 표준 헬스체크 `grpc.health.v1.Health`다. onset 분석 RPC는 proto 인터페이스 정의만 작성했고, 서버 구현과 AI 모델 연결은 후속 구현 대상이다.
+현재 제공하는 서비스는 gRPC 표준 헬스체크 `grpc.health.v1.Health`다. onset 분석 RPC `OnsetService.AnalyzeSession`은 앵무 소리 판정 모델과 onset 분석으로 캡처마다 위급 여부를 돌려준다.
 
 ## 준비
 
@@ -114,7 +114,7 @@ status.details[0].Unpack(info)
 - 음역대 밖 울음: 횟수에서 제외하고 연속은 끊지 않음
 - 울음 검출: `OnsetAnalyzer`가 담당. −39 dBFS 이상, 무음 0.1초 이상이면 분리, 최소 30 ms
 - 기본값 근거: 0912 정상 가정 자료에서 앵무로 판정된 6,408개 중 이 기준을 넘는 파일 3개, 0.05%
-- 서버 연결: 없음. RPC는 proto 정의만 있다
+- 서버 연결: `OnsetServicer`가 앵무 소리로 판정된 캡처만 분석
 
 ## proto
 
@@ -155,11 +155,24 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 3. buddybird-api에 proto 파일을 복사하고 파일 첫 줄 주석에 기준 태그를 작성한다.
 4. buddybird-api에서 코드를 생성해 커밋한다.
 
+## 앵무 소리 판정 모델
+
+| 모델 | HuggingFace 저장소 | 버전 | 파일 |
+| --- | --- | --- | --- |
+| 판정 | `buddybird-ai/parrot-sound-gate` | `v2.0.0` | `gate-2.0.0.joblib` |
+| 임베딩 | `justinchuby/Perch-onnx` | 커밋 `da88bf8` | `perch_v2.onnx`, 409 MB |
+
+- 로컬 실행: 첫 시작 때 HuggingFace 캐시로 받고, 이후 캐시 사용
+- 컨테이너: 이미지 빌드 때 받아 넣음. 실행 중 다운로드 없음
+- 모델 교체: `app/onset/infra/parrot_gate.py`의 버전 상수 수정 후 이미지 재빌드
+
 ## 컨테이너
 
 - 실행 명령: `python -m app.main`
 - 노출 포트: 50051
 - 이미지 아키텍처: ARM64, `deploy` 워크플로에서 빌드
+- 판정 모델: 빌드 때 `python -m app.onset.infra.parrot_gate`로 받아 `HF_HOME=/app/models`에 저장
+- 실행 중 HuggingFace 접속: 없음, `HF_HUB_OFFLINE=1`
 
 ## 검사
 
