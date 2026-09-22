@@ -16,16 +16,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _GATE_REPO = "buddybird-ai/parrot-sound-gate"
-_GATE_FILE = "gate.joblib"
+_GATE_FILE = "gate-2.0.0.joblib"
 _GATE_REVISION = "v2.0.0"
 
 _PERCH_REPO = "justinchuby/Perch-onnx"
 _PERCH_FILE = "perch_v2.onnx"
+# gate v2.0.0의 model_manifest.json에 기록된 Perch 커밋
+_PERCH_REVISION = "da88bf8c37c0b3068fc706fe509f633b9fbd28c1"
 
 _SR = 32_000
 _WINDOW_S = 5.0
 _HOP_S = 2.5
-_TARGET_PEAK = 0.25
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +73,7 @@ class ParrotGate:
         bundle = joblib.load(gate_path)
         logger.info("Gate loaded (threshold=%.4f)", bundle["threshold"])
 
-        perch_path = hf_hub_download(_PERCH_REPO, _PERCH_FILE)
+        perch_path = hf_hub_download(_PERCH_REPO, _PERCH_FILE, revision=_PERCH_REVISION)
         session = ort.InferenceSession(str(perch_path))
         logger.info("Perch ONNX loaded")
         return _Models(bundle=bundle, session=session)
@@ -98,9 +99,6 @@ class ParrotGate:
             audio = audio.mean(axis=tuple(range(1, audio.ndim)))
         if sr != _SR:
             audio = librosa.resample(audio, orig_sr=sr, target_sr=_SR)
-        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-        if peak > 0:
-            audio = audio * (_TARGET_PEAK / peak)
 
         frames = self._frames(audio)
         input_name = session.get_inputs()[0].name
