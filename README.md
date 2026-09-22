@@ -143,10 +143,12 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 | `CaptureInput` | `captured_at` | `audio_captures.captured_at` |
 
 - 첫 메시지: `start`
-- 이후 메시지: `captured_at` 순서의 `capture`
+- 이후 메시지: `captured_at` 순서의 `capture`. 순서가 달라도 서버가 `captured_at`으로 정렬
 - 응답: 캡처마다 `chirp_count`, `window_chirp_count`, `is_emergency` 1개
-- 시간 창 상태: 스트림이 열려 있는 동안만 유지, 스트림이 끊기면 초기화
-- 서버 등록: 미구현, 호출 시 gRPC 기본 응답 `UNIMPLEMENTED`
+- 응답 시점: 클라이언트가 전송을 끝낸 뒤 `captured_at` 순서로 한꺼번에 전송
+- 캡처 분석: 모든 캡처를 동시에 처리, 실패한 캡처는 `chirp_count` 0
+- 시간 창: 30초, 스트림이 열려 있는 동안만 유지, 스트림이 끊기면 초기화
+- 서버 등록: `app/main.py`에서 `OnsetServicer` 등록
 
 ### buddybird-api 공유
 

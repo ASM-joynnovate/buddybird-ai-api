@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import deque
 from collections.abc import AsyncIterator
@@ -42,6 +43,20 @@ class OnsetServicer(onset_pb2_grpc.OnsetServiceServicer):
         self._onset = OnsetAnalyzer()
         self._emergency = EmergencyAnalyzer()
 
+    async def _process_capture(self, cap: onset_pb2.CaptureInput) -> int:
+        chirp_count = 0
+        try:
+            audio, sr = await download_audio_async(cap.s3_key)
+            gate_result = await self._gate.predict_async(audio, sr)
+            if gate_result.is_parrot:
+                samples = audio.astype(np.float64)
+                analysis = self._onset.analyze(samples=samples, sample_rate=sr)
+                judgement = self._emergency.judge(analysis=analysis, samples=samples)
+                chirp_count = len(judgement.in_band_chirps)
+        except Exception:
+            logger.exception("capture %s 분석 실패", cap.capture_id)
+        return chirp_count
+
     async def AnalyzeSession(  # noqa: N802
         self,
         request_iterator: AsyncIterator[onset_pb2.AnalyzeSessionRequest],
@@ -49,36 +64,28 @@ class OnsetServicer(onset_pb2_grpc.OnsetServiceServicer):
             onset_pb2.AnalyzeSessionRequest, onset_pb2.AnalyzeSessionResponse
         ],
     ) -> AsyncIterator[onset_pb2.AnalyzeSessionResponse]:
-        state = _SessionState()
+        captures: list[onset_pb2.CaptureInput] = []
 
         async for req in request_iterator:
             kind = req.WhichOneof("message")
             if kind == "start":
                 logger.info("Session started: %s", req.start.session_id)
-                continue
-            if kind != "capture":
-                continue
+            elif kind == "capture":
+                captures.append(req.capture)
 
-            cap = req.capture
-            chirp_count = 0
-            try:
-                audio, sr = await download_audio_async(cap.s3_key)
-                gate_result = await self._gate.predict_async(audio, sr)
+        chirp_counts = await asyncio.gather(
+            *[self._process_capture(cap) for cap in captures]
+        )
 
-                if gate_result.is_parrot:
-                    samples = audio.astype(np.float64)
-                    analysis = self._onset.analyze(samples=samples, sample_rate=sr)
-                    judgement = self._emergency.judge(
-                        analysis=analysis, samples=samples
-                    )
-                    chirp_count = len(judgement.in_band_chirps)
-            except Exception:
-                logger.exception("capture %s 분석 실패", cap.capture_id)
-
+        state = _SessionState()
+        ordered = sorted(
+            zip(captures, chirp_counts, strict=True),
+            key=lambda x: x[0].captured_at.seconds + x[0].captured_at.nanos / 1e9,
+        )
+        for cap, chirp_count in ordered:
             captured_at_s = cap.captured_at.seconds + cap.captured_at.nanos / 1e9
             state.add(captured_at_s, chirp_count)
             window_count = state.window_chirp_count()
-
             yield onset_pb2.AnalyzeSessionResponse(
                 capture_id=cap.capture_id,
                 chirp_count=chirp_count,
