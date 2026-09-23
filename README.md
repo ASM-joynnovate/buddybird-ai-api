@@ -166,7 +166,20 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 
 - 로컬 실행: 첫 시작 때 HuggingFace 캐시로 받고, 이후 캐시 사용
 - 컨테이너: 이미지 빌드 때 받아 넣음. 실행 중 다운로드 없음
-- 모델 교체: `app/onset/infra/parrot_gate.py`의 버전 상수 수정 후 이미지 재빌드
+- HuggingFace 업로드 절차: parrot-mimicry `docs/ops/huggingface.md`
+
+### 모델 버전 올리기
+
+HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 고정 후 PR로 교체한다.
+
+1. `app/onset/infra/parrot_gate.py`의 상수 수정
+   - `_GATE_REVISION`: 새 태그
+   - `_GATE_FILE`: 새 태그의 파일명
+   - `_PERCH_REVISION`: 새 태그 `model_manifest.json`의 Perch 커밋
+2. `make local`로 모델 다운로드와 서버 시작 확인
+3. `make check`, `make test` 통과 확인
+4. 이 README의 모델 표 갱신 후 PR 생성, `dev` merge
+5. GitHub Actions `deploy` 워크플로 수동 실행. 이미지 빌드 때 새 모델이 포함됨
 
 ## 컨테이너
 
