@@ -1,7 +1,7 @@
 # buddybird-ai-api
 
 Python 3.12와 uv로 gRPC 서버를 실행하고 헬스체크를 확인하는 프로젝트다.
-현재 제공하는 서비스는 gRPC 표준 헬스체크 `grpc.health.v1.Health`다. onset 분석 RPC는 proto 인터페이스 정의만 작성했고, 서버 구현과 AI 모델 연결은 후속 구현 대상이다.
+현재 제공하는 서비스는 gRPC 표준 헬스체크 `grpc.health.v1.Health`다. onset 분석 RPC `OnsetService.AnalyzeSession`은 앵무 소리 판정 모델과 onset 분석으로 캡처마다 위급 여부를 돌려준다.
 
 ## 준비
 
@@ -114,7 +114,7 @@ status.details[0].Unpack(info)
 - 음역대 밖 울음: 횟수에서 제외하고 연속은 끊지 않음
 - 울음 검출: `OnsetAnalyzer`가 담당. −39 dBFS 이상, 무음 0.1초 이상이면 분리, 최소 30 ms
 - 기본값 근거: 0912 정상 가정 자료에서 앵무로 판정된 6,408개 중 이 기준을 넘는 파일 3개, 0.05%
-- 서버 연결: 없음. RPC는 proto 정의만 있다
+- 서버 연결: `OnsetServicer`가 앵무 소리로 판정된 캡처만 분석
 
 ## proto
 
@@ -143,10 +143,12 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 | `CaptureInput` | `captured_at` | `audio_captures.captured_at` |
 
 - 첫 메시지: `start`
-- 이후 메시지: `captured_at` 순서의 `capture`
+- 이후 메시지: `captured_at` 순서의 `capture`. 순서가 달라도 서버가 `captured_at`으로 정렬
 - 응답: 캡처마다 `chirp_count`, `window_chirp_count`, `is_emergency` 1개
-- 시간 창 상태: 스트림이 열려 있는 동안만 유지, 스트림이 끊기면 초기화
-- 서버 등록: 미구현, 호출 시 gRPC 기본 응답 `UNIMPLEMENTED`
+- 응답 시점: 클라이언트가 전송을 끝낸 뒤 `captured_at` 순서로 한꺼번에 전송
+- 캡처 분석: 모든 캡처를 동시에 처리, 실패한 캡처는 `chirp_count` 0
+- 시간 창: 30초, 스트림이 열려 있는 동안만 유지, 스트림이 끊기면 초기화
+- 서버 등록: `app/main.py`에서 `OnsetServicer` 등록
 
 ### buddybird-api 공유
 
@@ -155,11 +157,37 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 3. buddybird-api에 proto 파일을 복사하고 파일 첫 줄 주석에 기준 태그를 작성한다.
 4. buddybird-api에서 코드를 생성해 커밋한다.
 
+## 앵무 소리 판정 모델
+
+| 모델 | HuggingFace 저장소 | 버전 | 파일 |
+| --- | --- | --- | --- |
+| 판정 | `buddybird-ai/parrot-sound-gate` | `v2.0.0` | `gate-2.0.0.joblib` |
+| 임베딩 | `justinchuby/Perch-onnx` | 커밋 `da88bf8` | `perch_v2.onnx`, 409 MB |
+
+- 로컬 실행: 첫 시작 때 HuggingFace 캐시로 받고, 이후 캐시 사용
+- 컨테이너: 이미지 빌드 때 받아 넣음. 실행 중 다운로드 없음
+- HuggingFace 업로드 절차: parrot-mimicry `docs/ops/huggingface.md`
+
+### 모델 버전 올리기
+
+HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 고정 후 PR로 교체한다.
+
+1. `app/onset/infra/parrot_gate.py`의 상수 수정
+   - `_GATE_REVISION`: 새 태그
+   - `_GATE_FILE`: 새 태그의 파일명
+   - `_PERCH_REVISION`: 새 태그 `model_manifest.json`의 Perch 커밋
+2. `make local`로 모델 다운로드와 서버 시작 확인
+3. `make check`, `make test` 통과 확인
+4. 이 README의 모델 표 갱신 후 PR 생성, `dev` merge
+5. GitHub Actions `deploy` 워크플로 수동 실행. 이미지 빌드 때 새 모델이 포함됨
+
 ## 컨테이너
 
 - 실행 명령: `python -m app.main`
 - 노출 포트: 50051
 - 이미지 아키텍처: ARM64, `deploy` 워크플로에서 빌드
+- 판정 모델: 빌드 때 `python -m app.onset.infra.parrot_gate`로 받아 `HF_HOME=/app/models`에 저장
+- 실행 중 HuggingFace 접속: 없음, `HF_HUB_OFFLINE=1`
 
 ## 검사
 

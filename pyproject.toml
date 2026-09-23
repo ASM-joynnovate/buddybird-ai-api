@@ -4,10 +4,16 @@ version = "0.1.0"
 description = "BuddyBird vocal analysis API"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "boto3>=1.35.0",
     "grpcio>=1.84.0",
     "grpcio-health-checking>=1.84.0",
     "grpcio-status>=1.84.0",
+    "huggingface-hub>=0.24.0",
+    "joblib>=1.4.0",
+    "librosa>=0.10.0",
     "numpy>=2.5.3",
+    "onnxruntime>=1.19.0",
+    "scikit-learn>=1.5.0",
 ]
 
 [dependency-groups]
@@ -59,4 +65,8 @@ files = ["app", "core", "tests"]
 
 [[tool.mypy.overrides]]
 module = ["google.rpc.*", "grpc_health.*", "grpc_status.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "joblib.*", "librosa.*", "onnxruntime.*", "sklearn.*"]
 ignore_missing_imports = true
