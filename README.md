@@ -114,7 +114,7 @@ status.details[0].Unpack(info)
 - 음역대 밖 울음: 횟수에서 제외하고 연속은 끊지 않음
 - 울음 검출: `OnsetAnalyzer`가 담당. −39 dBFS 이상, 무음 0.1초 이상이면 분리, 최소 30 ms
 - 기본값 근거: 0912 정상 가정 자료에서 앵무로 판정된 6,408개 중 이 기준을 넘는 파일 3개, 0.05%
-- 서버 연결: `OnsetServicer`가 앵무 소리로 판정된 캡처만 분석
+- 서버 연결: `CycleAnalyzer`가 앵무 소리로 판정된 캡처만 분석. gRPC와 SQS 워커가 함께 사용
 
 ## proto
 
@@ -146,7 +146,7 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 - 이후 메시지: `captured_at` 순서의 `capture`. 순서가 달라도 서버가 `captured_at`으로 정렬
 - 응답: 캡처마다 `chirp_count`, `window_chirp_count`, `is_emergency` 1개
 - 응답 시점: 클라이언트가 전송을 끝낸 뒤 `captured_at` 순서로 한꺼번에 전송
-- 캡처 분석: 모든 캡처를 동시에 처리, 실패한 캡처는 `chirp_count` 0
+- 캡처 분석: 최대 4개씩 동시에 처리, 실패한 캡처는 `chirp_count` 0
 - 시간 창: 30초, 스트림이 열려 있는 동안만 유지, 스트림이 끊기면 초기화
 - 서버 등록: `app/main.py`에서 `OnsetServicer` 등록
 
@@ -156,6 +156,86 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 2. `dev` merge 커밋에 `proto-v<버전>` 태그를 생성한다.
 3. buddybird-api에 proto 파일을 복사하고 파일 첫 줄 주석에 기준 태그를 작성한다.
 4. buddybird-api에서 코드를 생성해 커밋한다.
+
+## SQS 사이클 분석
+
+buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 분석해 결과 큐로 발행한다.
+gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 사용한다.
+
+| 환경 변수 | 값 |
+| --- | --- |
+| `SQS_PARROT_SOUND_DETECTION_QUEUE_URL` | 요청 큐 URL. 없으면 워커 미실행 |
+| `SQS_JUDGMENT_RESULT_QUEUE_URL` | 결과 큐 URL. 요청 큐 URL이 있으면 필수 |
+| `SQS_ENDPOINT_URL` | 로컬 elasticmq 주소. 운영에서는 비움 |
+| `AUDIO_S3_BUCKET` | 캡처 오디오 버킷 |
+
+### 요청 메시지
+
+```json
+{
+  "type": "cycle.analyze",
+  "session_id": "0199…",
+  "cycle": 3,
+  "sounds": [
+    {"sound_id": "0199…", "object_key": "user/…/sound.wav", "captured_at": "2026-09-23T10:00:00Z"}
+  ]
+}
+```
+
+- `sounds`: 사이클의 캡처 전체, 1개 이상. 순서 무관
+- `captured_at`: ISO 8601, 시간대 필수
+
+### 결과 메시지
+
+```json
+{
+  "type": "cycle.analyzed",
+  "session_id": "0199…",
+  "cycle": 3,
+  "model_version": "parrot-sound-gate@v2.0.0",
+  "analyzed_at": "2026-09-23T10:05:12.345678+00:00",
+  "is_emergency": false,
+  "sounds": [
+    {"sound_id": "0199…", "is_parrot": true, "score": 0.93,
+     "chirp_count": 4, "window_chirp_count": 6, "is_emergency": false}
+  ]
+}
+```
+
+- `sounds`: `captured_at` 순서
+- `score`: 앵무 소리 판정 확률. `is_parrot`이 false면 `chirp_count` 0
+- `window_chirp_count`: 직전 30초 안 같은 사이클 캡처의 chirp 합. 사이클 사이에는 이어지지 않음
+- `is_emergency`: 캡처별로 `window_chirp_count` 7 이상. 최상위 값은 캡처 중 하나라도 true
+
+### 처리 규칙
+
+| 상황 | 동작 |
+| --- | --- |
+| 분석 성공 | 결과 발행 후 요청 삭제 |
+| 캡처 하나라도 실패 | 결과 미발행, 요청 유지. 재시도 5회 후 DLQ |
+| 형식이 잘못된 요청 | 요청 유지. 재시도 5회 후 DLQ. 빈 값, `null`, 타입이 다른 필드, 시간대 없는 `captured_at` 포함 |
+| 분석이 길어짐 | 60초마다 요청 가시성을 180초로 연장 |
+| 서버 종료(`SIGTERM`) | 새 수신 중단, 처리 중인 사이클은 최대 25초 대기. 넘기면 요청을 즉시 큐에 반환 |
+
+- 중복 결과: 결과 발행 뒤 요청 삭제 전에 종료되면 같은 결과를 다시 발행. buddybird-api에서 `session_id`, `cycle`, `model_version`으로 중복 제거
+- 처리 시간: 사이클마다 `사이클 분석 완료 … elapsed=` 로그
+
+### 로컬 실행
+
+```sh
+docker run --rm -p 9324:9324 softwaremill/elasticmq-native
+aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name request
+aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name result
+
+AWS_REGION=ap-northeast-2 \
+SQS_ENDPOINT_URL=http://localhost:9324 \
+SQS_PARROT_SOUND_DETECTION_QUEUE_URL=http://localhost:9324/000000000000/request \
+SQS_JUDGMENT_RESULT_QUEUE_URL=http://localhost:9324/000000000000/result \
+AUDIO_S3_BUCKET=<dev 데이터 버킷> \
+make local
+```
+
+- elasticmq 인증: 임의 값 허용. S3 읽기에는 dev 버킷 권한이 있는 AWS 인증 필요
 
 ## 앵무 소리 판정 모델
 
