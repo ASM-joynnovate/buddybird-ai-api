@@ -297,6 +297,36 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
 
 ### 로컬 실행
 
+#### dev 큐에 연결
+
+실제 dev SQS와 데이터 버킷을 사용한다. Docker가 필요 없고 dev 버킷 읽기 권한이 있는 AWS 인증(`aws sso login`)이 필요하다.
+
+```sh
+dev_queue() { aws sqs get-queue-url --region ap-northeast-2 --queue-name "jn-buddybird-dev-$1" --query QueueUrl --output text; }
+
+AWS_REGION=ap-northeast-2 \
+SQS_PARROT_SOUND_DETECTION_QUEUE_URL="$(dev_queue parrot-sound-detection)" \
+SQS_JUDGMENT_RESULT_QUEUE_URL="$(dev_queue judgment-result)" \
+AUDIO_S3_BUCKET='jn-buddybird-v1-data-dev-<계정>-ap-northeast-2' \
+make local port=50061
+```
+
+다른 터미널에서 요청을 보내고 결과를 확인한다. `object_key`는 dev 버킷에 있는 오디오 key를 사용한다.
+
+```sh
+aws sqs send-message --region ap-northeast-2 --queue-url "$(dev_queue parrot-sound-detection)" \
+  --message-body '{"type":"cycle.analyze","session_id":"local-test","cycle":1,"sounds":[{"sound_id":"s1","object_key":"<key>","captured_at":"2026-09-27T10:00:00Z"}]}'
+aws sqs receive-message --region ap-northeast-2 --queue-url "$(dev_queue judgment-result)" --wait-time-seconds 10
+```
+
+- 사전 확인: 두 큐의 메시지 수가 0인지 확인. dev ai-api 서비스가 실행 중이면 요청을 나눠 가져가므로 사용하지 않음
+- 정리: 받은 결과는 `aws sqs delete-message`로 삭제. buddybird-api dev consumer가 결과 큐를 소비하기 시작하면 결과 확인은 consumer 로그로 대체
+- 확인 기록(2026-09-27): 소리 3개 사이클 2.8초, 결과 1건 발행과 요청 삭제, `SIGTERM` 후 14초에 정상 종료
+
+#### elasticmq
+
+큐를 로컬에서 흉내 낸다. 아직 이 절차로 실행해 본 적은 없다.
+
 ```sh
 docker run --rm -p 9324:9324 softwaremill/elasticmq-native
 aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name request

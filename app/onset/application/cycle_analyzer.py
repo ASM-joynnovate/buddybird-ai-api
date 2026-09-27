@@ -19,7 +19,9 @@ from app.onset.infra.s3_audio import download_audio_async
 
 logger = logging.getLogger(__name__)
 
+# 측정 전 임시값. 응급 판정의 울음 7회를 세는 시간 창이며, 0912 측정 자료에는 창 길이 근거가 없다.
 WINDOW_SECONDS = 30.0
+# 측정 전 임시값. 2 vCPU 태스크에서 2와 4의 사이클 처리 시간을 비교한 뒤 확정한다.
 MAX_CONCURRENT_CAPTURES = 4
 
 AudioLoader = Callable[[str], Awaitable[tuple[np.ndarray, int]]]
