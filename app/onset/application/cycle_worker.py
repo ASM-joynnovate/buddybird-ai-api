@@ -138,7 +138,7 @@ class CycleWorker:
         model_version: str,
         wait_seconds: int = 20,
         heartbeat_seconds: float = 60.0,
-        visibility_timeout_seconds: int = 180,
+        visibility_timeout_seconds: int = 300,
     ) -> None:
         self._queue = queue
         self._analyzer = analyzer

@@ -250,12 +250,14 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
   "session_id": "0199…",
   "cycle": 3,
   "sounds": [
-    {"sound_id": "0199…", "object_key": "user/…/sound.wav", "captured_at": "2026-09-23T10:00:00Z"}
+    {"sound_id": "0199…", "object_key": "user/…/session/…/sound/…", "captured_at": "2026-09-23T10:00:00Z"}
   ]
 }
 ```
 
 - `sounds`: 사이클의 캡처 전체, 1개 이상. 순서 무관
+- `sound_id`: `session_sounds.id`
+- `object_key`: `files.file_path`. 데이터 버킷의 `user/{user_id}/session/{session_id}/sound/{file_id}`
 - `captured_at`: ISO 8601, 시간대 필수
 
 ### 결과 메시지
@@ -287,7 +289,7 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
 | 분석 성공 | 결과 발행 후 요청 삭제 |
 | 캡처 하나라도 실패 | 결과 미발행, 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름 |
 | 형식이 잘못된 요청 | 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름. 빈 값, `null`, 타입이 다른 필드, 시간대 없는 `captured_at` 포함 |
-| 분석이 길어짐 | 60초마다 요청 가시성을 180초로 연장 |
+| 분석이 길어짐 | 60초마다 요청 가시성을 300초로 연장 |
 | 서버 종료(`SIGTERM`) | 새 수신 중단, 처리 중인 사이클은 최대 25초 대기. 넘기면 요청을 즉시 큐에 반환 |
 
 - 중복 결과: 결과 발행 뒤 요청 삭제 전에 종료되면 같은 결과를 다시 발행. buddybird-api에서 `session_id`, `cycle`, `model_version`으로 중복 제거
