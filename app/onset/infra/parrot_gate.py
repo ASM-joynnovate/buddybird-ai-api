@@ -61,6 +61,10 @@ class ParrotGate:
         self._models: _Models | None = None
         self._lock = threading.Lock()
 
+    @property
+    def model_version(self) -> str:
+        return f"{_GATE_REPO.rsplit('/', 1)[-1]}@{self._revision}"
+
     def preload(self) -> None:
         """서버 시작 시 모델을 미리 로드한다."""
         self._ensure_loaded()
