@@ -13,6 +13,7 @@ from typing import Protocol
 import numpy as np
 
 from app.onset.domain.emergency import EmergencyAnalyzer
+from app.onset.domain.loudness import is_too_quiet, maxwin_db
 from app.onset.domain.services import OnsetAnalyzer
 from app.onset.infra.parrot_gate import GateResult
 from app.onset.infra.s3_audio import download_audio_async
@@ -56,6 +57,7 @@ class _Scored:
 
 
 _FAILED = _Scored(is_parrot=False, probability=0.0, chirp_count=0)
+_TOO_QUIET = _Scored(is_parrot=False, probability=0.0, chirp_count=0)
 
 
 class _Window:
@@ -130,6 +132,16 @@ class CycleAnalyzer:
 
     async def _score(self, cap: CaptureInput) -> _Scored:
         audio, sr = await self._load_audio(cap.s3_key)
+        loudness = maxwin_db(audio, sr)
+        too_quiet = is_too_quiet(loudness)
+        logger.info(
+            "capture %s maxwin_db=%.2f too_quiet=%s",
+            cap.capture_id,
+            loudness,
+            too_quiet,
+        )
+        if too_quiet:
+            return _TOO_QUIET
         gate_result = await self._gate.predict_async(audio, sr)
         chirp_count = 0
         if gate_result.is_parrot:
