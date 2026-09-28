@@ -23,47 +23,26 @@ def signal_of(*chirp_hz: float) -> NDArray[np.float64]:
     return np.concatenate(parts)
 
 
-def judge(*chirp_hz: float) -> tuple[int, float, bool]:
+def in_band_count(*chirp_hz: float) -> int:
     samples = signal_of(*chirp_hz)
     analysis = onset_analyzer.analyze(samples=samples, sample_rate=SAMPLE_RATE)
     judgement = emergency_analyzer.judge(analysis=analysis, samples=samples)
-    return (
-        judgement.consecutive_chirps,
-        judgement.consecutive_seconds,
-        judgement.is_emergency,
-    )
+    return len(judgement.in_band_chirps)
 
 
-def test_seven_chirps_in_band_are_emergency() -> None:
-    count, seconds, is_emergency = judge(*([5000.0] * 7))
-
-    assert count == 7
-    assert seconds == pytest.approx(7 * CHIRP_SECONDS + 6 * SILENCE_SECONDS, abs=0.05)
-    assert is_emergency
-
-
-def test_six_chirps_in_band_are_not_emergency() -> None:
-    count, _, is_emergency = judge(*([5000.0] * 6))
-
-    assert count == 6
-    assert not is_emergency
+def test_chirps_in_band_are_counted() -> None:
+    assert in_band_count(*([5000.0] * 7)) == 7
 
 
 def test_chirps_below_band_are_not_counted() -> None:
-    count, seconds, is_emergency = judge(*([3000.0] * 7))
-
-    assert count == 0
-    assert seconds == 0.0
-    assert not is_emergency
+    assert in_band_count(*([3000.0] * 7)) == 0
 
 
-def test_chirp_outside_band_keeps_the_sequence() -> None:
-    count, _, is_emergency = judge(
-        5000.0, 5000.0, 5000.0, 3000.0, 5000.0, 5000.0, 5000.0, 5000.0
+def test_chirp_outside_band_is_skipped() -> None:
+    assert (
+        in_band_count(5000.0, 5000.0, 5000.0, 3000.0, 5000.0, 5000.0, 5000.0, 5000.0)
+        == 7
     )
-
-    assert count == 7
-    assert is_emergency
 
 
 def test_peak_frequency_matches_the_tone() -> None:
@@ -76,13 +55,12 @@ def test_peak_frequency_matches_the_tone() -> None:
     assert judgement.chirps[0].in_band
 
 
-def test_empty_capture_is_not_emergency() -> None:
+def test_empty_capture_has_no_chirps() -> None:
     samples = np.zeros(SAMPLE_RATE)
     analysis = onset_analyzer.analyze(samples=samples, sample_rate=SAMPLE_RATE)
     judgement = emergency_analyzer.judge(analysis=analysis, samples=samples)
 
     assert judgement.chirps == ()
-    assert not judgement.is_emergency
 
 
 @pytest.mark.parametrize(

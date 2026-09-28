@@ -1,17 +1,12 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from app.onset.domain.entities import (
-    Call,
-    OnsetAnalysis,
-    OnsetCriteria,
-    RepeatInterval,
-)
+from app.onset.domain.entities import Call, OnsetAnalysis, OnsetCriteria
 from app.onset.domain.exceptions import InvalidAudioSignalError
 
 
 class OnsetAnalyzer:
-    """캡처 1개의 울음과 반복 구간을 계산하고 응급 후보를 판정한다.
+    """캡처 1개에서 울음을 검출한다.
 
     samples는 full scale을 1로 정규화한 mono 신호다.
     """
@@ -30,15 +25,9 @@ class OnsetAnalyzer:
         if not np.isfinite(signal).all():
             raise InvalidAudioSignalError(detail="non-finite sample")
 
-        calls = self._detect_calls(signal=signal, sample_rate=sample_rate)
         return OnsetAnalysis(
             sample_rate=sample_rate,
-            total_samples=int(signal.size),
-            criteria=self.criteria,
-            calls=tuple(calls),
-            repeat_intervals=tuple(
-                self._group_repeat_intervals(calls=calls, sample_rate=sample_rate)
-            ),
+            calls=tuple(self._detect_calls(signal=signal, sample_rate=sample_rate)),
         )
 
     def _detect_calls(
@@ -75,32 +64,6 @@ class OnsetAnalyzer:
                     start_sample=int(starts[frame_ids[0]]),
                     end_sample=int(starts[frame_ids[-1]] + counts[frame_ids[-1]]),
                     active_samples=active_samples,
-                    active_energy=float(sums[frame_ids].sum()),
                 )
             )
         return calls
-
-    def _group_repeat_intervals(
-        self, *, calls: list[Call], sample_rate: int
-    ) -> list[RepeatInterval]:
-        max_gap_samples = self.criteria.max_repeat_gap_samples(sample_rate)
-        groups: list[list[Call]] = []
-        for call in calls:
-            if (
-                groups
-                and call.start_sample - groups[-1][-1].end_sample <= max_gap_samples
-            ):
-                groups[-1].append(call)
-            else:
-                groups.append([call])
-
-        min_span_samples = self.criteria.min_repeat_span_samples(sample_rate)
-        return [
-            RepeatInterval(
-                calls=tuple(group),
-                meets_min_calls=len(group) >= self.criteria.min_repeat_calls,
-                meets_min_span=(group[-1].end_sample - group[0].start_sample)
-                >= min_span_samples,
-            )
-            for group in groups
-        ]
