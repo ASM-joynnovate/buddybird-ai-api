@@ -13,7 +13,6 @@ from app.onset.domain.exceptions import (
 from app.onset.domain.services import OnsetAnalyzer
 
 SAMPLE_RATE = 16000
-TONE_RMS_DBFS = 10 * math.log10(0.005)
 
 
 def tone(
@@ -57,17 +56,12 @@ def test_default_criteria_match_approved_values() -> None:
     assert criteria.frame_samples(SAMPLE_RATE) == 160
     assert criteria.max_call_silence_samples(SAMPLE_RATE) == 1600
     assert criteria.min_call_samples(SAMPLE_RATE) == 480
-    assert criteria.max_repeat_gap_samples(SAMPLE_RATE) == 32000
-    assert criteria.min_repeat_calls == 4
-    assert criteria.min_repeat_span_samples(SAMPLE_RATE) == 80000
 
 
 @pytest.mark.parametrize("signal", [silence(1.0), np.zeros(0, dtype=np.float64)])
 def test_silence_returns_no_calls(signal: NDArray[np.float64]) -> None:
     result = analyze(signal)
     assert result.calls == ()
-    assert result.repeat_intervals == ()
-    assert not result.is_emergency_candidate
 
 
 @pytest.mark.parametrize(("call_seconds", "expected_calls"), [(0.02, 0), (0.03, 1)])
@@ -87,82 +81,21 @@ def test_silence_up_to_max_call_silence_is_bridged(
     assert len(calls) == expected_calls
     if expected_calls == 1:
         assert calls[0].active_seconds == pytest.approx(0.2)
-        assert calls[0].duration_seconds == pytest.approx(0.3)
+        assert calls[0].offset_seconds - calls[0].onset_seconds == pytest.approx(0.3)
 
 
-@pytest.mark.parametrize(("gap_seconds", "expected_intervals"), [(2.0, 1), (2.01, 2)])
-def test_calls_within_max_repeat_gap_share_interval(
-    gap_seconds: float, expected_intervals: int
-) -> None:
-    result = analyze(repeat([0.2, 0.2], gap_seconds))
-    assert len(result.calls) == 2
-    assert len(result.repeat_intervals) == expected_intervals
-
-
-@pytest.mark.parametrize(
-    ("last_call_seconds", "span_seconds", "expected"),
-    [(0.2, 5.0, True), (0.19, 4.99, False)],
-)
-def test_repeat_span_boundary(
-    last_call_seconds: float, span_seconds: float, expected: bool
-) -> None:
-    result = analyze(repeat([0.2, 0.2, 0.2, last_call_seconds], 1.4))
-    [interval] = result.repeat_intervals
-    assert interval.call_count == 4
-    assert interval.span_seconds == pytest.approx(span_seconds)
-    assert interval.meets_min_calls
-    assert interval.meets_min_span is expected
-    assert result.is_emergency_candidate is expected
-
-
-@pytest.mark.parametrize(("call_count", "expected"), [(3, False), (4, True)])
-def test_repeat_call_count_boundary(call_count: int, expected: bool) -> None:
-    result = analyze(repeat([1.0] * call_count, 1.0))
-    [interval] = result.repeat_intervals
-    assert interval.meets_min_span
-    assert interval.meets_min_calls is expected
-    assert result.is_emergency_candidate is expected
-
-
-def test_call_and_interval_features() -> None:
+def test_call_boundaries() -> None:
     signal = np.concatenate([silence(0.5), repeat([0.2, 0.3], 0.5), silence(0.5)])
-    result = analyze(signal)
-
-    first, second = result.calls
+    first, second = analyze(signal).calls
     assert first.onset_seconds == pytest.approx(0.5)
     assert first.offset_seconds == pytest.approx(0.7)
-    assert first.duration_seconds == pytest.approx(0.2)
-    assert first.active_rms_dbfs == pytest.approx(TONE_RMS_DBFS)
     assert second.onset_seconds == pytest.approx(1.2)
     assert second.offset_seconds == pytest.approx(1.5)
-
-    [interval] = result.repeat_intervals
-    assert interval.silence_gaps_seconds == pytest.approx((0.5,))
-    assert interval.span_seconds == pytest.approx(1.0)
-    assert interval.active_seconds == pytest.approx(0.5)
-    assert interval.active_rms_dbfs == pytest.approx(TONE_RMS_DBFS)
-    assert result.duration_seconds == pytest.approx(2.0)
 
 
 def test_partial_last_frame_uses_actual_samples() -> None:
     [call] = analyze(tone(1697 / SAMPLE_RATE)).calls
     assert call.end_sample == call.active_samples == 1697
-
-
-@pytest.mark.parametrize(
-    ("criteria", "expected"),
-    [
-        (OnsetCriteria(), False),
-        (OnsetCriteria(min_repeat_calls=3), True),
-        (OnsetCriteria(min_repeat_span_seconds=5.01), False),
-        (OnsetCriteria(min_repeat_calls=3, max_repeat_gap_seconds=0.99), False),
-    ],
-)
-def test_criteria_change_changes_candidate(
-    criteria: OnsetCriteria, expected: bool
-) -> None:
-    result = analyze(repeat([1.0] * 3, 1.0), criteria)
-    assert result.is_emergency_candidate is expected
 
 
 @pytest.mark.parametrize(("gate_dbfs", "expected_calls"), [(-39.0, 0), (-45.0, 1)])
@@ -206,8 +139,7 @@ def test_invalid_signal_raises(signal: NDArray[np.float64], sample_rate: int) ->
     "build",
     [
         lambda: OnsetCriteria(frame_ms=0),
-        lambda: OnsetCriteria(min_repeat_calls=0),
-        lambda: OnsetCriteria(max_repeat_gap_seconds=-1),
+        lambda: OnsetCriteria(min_call_ms=-1),
         lambda: OnsetCriteria(gate_dbfs=math.nan),
     ],
 )

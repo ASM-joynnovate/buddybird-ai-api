@@ -1,6 +1,6 @@
 # buddybird-ai-api
 
-Python 3.12 기반 앵무 울음 분석 프로젝트다. gRPC 서버와 캡처 단위의 울음·반복 구간·음역대 분석 로직을 포함한다.
+Python 3.12 기반 앵무 울음 분석 프로젝트다. gRPC 서버와 캡처 단위의 울음·음역대 분석 로직을 포함한다.
 서버는 gRPC 표준 헬스체크 `grpc.health.v1.Health`와 분석 RPC `OnsetService.AnalyzeSession`을 제공한다.
 SQS 요청 큐를 설정하면 사이클 분석 워커도 같은 프로세스에서 실행하며, gRPC와 판정 모델·분석 로직을 공유한다.
 
@@ -11,9 +11,9 @@ SQS 요청 큐를 설정하면 사이클 분석 워커도 같은 프로세스에
 | `app/main.py` | 모델 로딩, gRPC 서버·SQS 워커 실행과 종료 처리 |
 | `app/onset/application/` | 사이클 분석, gRPC 서비스, SQS 워커 |
 | `app/onset/infra/` | 앵무 소리 판정 모델, S3 오디오 로더, SQS 클라이언트 |
-| `app/onset/domain/entities.py` | 울음·반복 구간·분석 결과와 `OnsetCriteria` |
-| `app/onset/domain/services.py` | `OnsetAnalyzer`: 울음 검출과 반복 구간 후보 판정 |
-| `app/onset/domain/emergency.py` | `EmergencyAnalyzer`, `EmergencyCriteria`: 음역대 기반 위급 판정 |
+| `app/onset/domain/entities.py` | 울음·분석 결과와 `OnsetCriteria` |
+| `app/onset/domain/services.py` | `OnsetAnalyzer`: 울음 검출 |
+| `app/onset/domain/emergency.py` | `EmergencyAnalyzer`, `EmergencyCriteria`: 울음별 음역대 판정 |
 | `app/onset/domain/exceptions.py` | 분석 입력·설정 오류 |
 | `core/grpc/` | 포트 설정, 헬스체크 CLI, 오류 인터셉터 |
 | `proto/buddybird/ai/v1/onset.proto` | 분석 RPC 계약 |
@@ -125,7 +125,7 @@ status.details[0].Unpack(info)
 
 두 도메인 분석기는 캡처 하나를 대상으로 한다. gRPC와 SQS 워커는 `CycleAnalyzer`를 통해 앵무 소리로 판정된 캡처에 이 분석기를 적용한다.
 
-### 울음 검출과 반복 구간 후보
+### 울음 검출
 
 `OnsetAnalyzer`는 full scale을 1로 정규화한 1차원 mono 샘플과 양수인 샘플레이트를 받는다.
 오디오 파일 디코딩이나 리샘플링은 수행하지 않는다. 빈 신호와 무음은 울음이 없는 결과를 반환하고,
@@ -137,27 +137,20 @@ status.details[0].Unpack(info)
 | 활성 프레임 | RMS −39 dBFS 이상 |
 | 한 울음으로 연결할 무음 | 100 ms 이하, 초과하면 분리 |
 | 울음 최소 길이 | 활성 프레임 합계 30 ms 이상, 무음 제외 |
-| 같은 반복 구간으로 묶을 울음 사이 간격 | 앞 울음 끝부터 다음 울음 시작까지 2초 이하 |
-| 응급 후보 | 같은 구간에 울음 4회 이상 **그리고** 처음 시작부터 마지막 끝까지 5초 이상 |
 
-`OnsetAnalysis.is_emergency_candidate`는 위 반복 조건을 만족하는 구간이 있는지 나타낸다.
+### 울음별 음역대 판정
 
-### 음역대 기반 위급 판정
-
-`EmergencyAnalyzer`는 검출된 울음마다 대표 음높이를 구하고, 캡처 전체에서 음역대 안 울음 수를 합산한다.
-`EmergencyJudgement.is_emergency`는 반복 구간 후보 여부와 독립적으로 계산한다.
+`EmergencyAnalyzer`는 검출된 울음마다 대표 음높이를 구하고 음역대 안인지 판정한다.
+`EmergencyJudgement.in_band_chirps`가 캡처의 음역대 안 울음이다.
 
 | 기준 | 기본값 |
 | --- | --- |
 | 음역대 | 4,600~8,000 Hz |
-| 위급 판정 | 음역대 안 울음 7회 이상 |
+| 위급 기준 (`min_consecutive_chirps`) | 시간 창 안 음역대 안 울음 7회 이상 |
 | 대표 음높이 | 울음 구간 전체 파워 스펙트럼의 최대 주파수 |
 | 음높이 탐색 범위 | 250~8,000 Hz |
-| 판정 단위 | 캡처 1개 |
 
 - 음역대 양 끝값 포함. 음역대 밖 울음은 횟수에서 제외한다.
-- `consecutive_chirps`는 음역대 안 울음의 총개수다. 울음 사이 간격이나 음역대 밖 울음으로 초기화하지 않는다.
-- `consecutive_seconds`는 첫 음역대 안 울음 시작부터 마지막 끝까지의 시간이며, 판정의 추가 조건은 아니다.
 - 판정 기준 변경: `OnsetCriteria` 또는 `EmergencyCriteria`를 생성해 각 분석기의 `criteria` 인자로 전달한다.
 
 ### gRPC·SQS 응답의 위급 판정
@@ -184,8 +177,7 @@ samples = np.tile(np.concatenate([chirp, silence]), 7)
 
 analysis = OnsetAnalyzer().analyze(samples=samples, sample_rate=sample_rate)
 judgement = EmergencyAnalyzer().judge(analysis=analysis, samples=samples)
-print(len(analysis.calls), analysis.is_emergency_candidate)  # 7 False: 5초 미만
-print(judgement.consecutive_chirps, judgement.is_emergency)  # 7 True: 음역대 안 7회
+print(len(analysis.calls), len(judgement.in_band_chirps))  # 7 7
 PYTHON
 ```
 

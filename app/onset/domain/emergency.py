@@ -47,28 +47,21 @@ class Chirp:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class EmergencyJudgement:
-    """캡처 1개의 위급 판정 결과."""
+    """캡처 1개의 울음별 음높이와 음역대 판정 결과."""
 
-    criteria: EmergencyCriteria
     chirps: tuple[Chirp, ...]
-    consecutive_chirps: int
-    consecutive_seconds: float
 
     @property
     def in_band_chirps(self) -> tuple[Chirp, ...]:
         return tuple(chirp for chirp in self.chirps if chirp.in_band)
 
-    @property
-    def is_emergency(self) -> bool:
-        return self.consecutive_chirps >= self.criteria.min_consecutive_chirps
-
 
 class EmergencyAnalyzer:
-    """음역대 안 울음이 연속으로 몇 번 이어졌는지로 위급을 판정한다.
+    """울음마다 대표 음높이를 구해 위급 음역대 안인지 판정한다.
 
-    울음 검출은 OnsetAnalyzer가 맡고, 이 단계는 울음마다 대표 음높이를 구한다.
+    울음 검출은 OnsetAnalyzer가 맡는다.
     대표 음높이는 울음 구간 전체의 파워 스펙트럼에서 가장 큰 주파수다.
-    음역대 밖 울음은 횟수에서 제외하되 연속을 끊지 않는다.
+    위급 여부는 CycleAnalyzer가 시간 창 안의 음역대 안 울음 수로 정한다.
     """
 
     def __init__(self, *, criteria: EmergencyCriteria | None = None) -> None:
@@ -82,18 +75,7 @@ class EmergencyAnalyzer:
         chirps = tuple(
             self._to_chirp(call=call, signal=signal) for call in analysis.calls
         )
-        in_band = [chirp for chirp in chirps if chirp.in_band]
-        seconds = (
-            in_band[-1].call.offset_seconds - in_band[0].call.onset_seconds
-            if in_band
-            else 0.0
-        )
-        return EmergencyJudgement(
-            criteria=self.criteria,
-            chirps=chirps,
-            consecutive_chirps=len(in_band),
-            consecutive_seconds=seconds,
-        )
+        return EmergencyJudgement(chirps=chirps)
 
     def _to_chirp(self, *, call: Call, signal: NDArray[np.float64]) -> Chirp:
         peak_hz = self.peak_frequency(
