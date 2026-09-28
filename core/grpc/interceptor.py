@@ -10,7 +10,7 @@ from google.protobuf import any_pb2
 from google.rpc import error_details_pb2, status_pb2
 from grpc_status import rpc_status
 
-from core.common.errors import CustomError
+from core.errors import CustomError
 
 logger = logging.getLogger(__name__)
 

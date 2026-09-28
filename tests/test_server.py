@@ -12,7 +12,7 @@ from grpc_status import rpc_status
 
 from app.main import create_server
 from app.onset.domain.exceptions import InvalidAudioSignalError
-from core.common.errors import ResourceNotFoundError
+from core.errors import ResourceNotFoundError
 from core.grpc import healthcheck
 from core.grpc.interceptor import (
     ERROR_DOMAIN,

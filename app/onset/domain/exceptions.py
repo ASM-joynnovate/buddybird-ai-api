@@ -1,4 +1,4 @@
-from core.common.errors import CustomError
+from core.errors import CustomError
 
 
 class InvalidAudioSignalError(CustomError):
