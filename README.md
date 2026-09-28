@@ -212,7 +212,7 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 | --- | --- | --- |
 | `SessionStart` | `session_id` | `audio_captures.client_session_id` |
 | `CaptureInput` | `capture_id` | `audio_captures.client_capture_id` |
-| `CaptureInput` | `s3_key` | 데이터 버킷의 `audio_capture/` 객체 key |
+| `CaptureInput` | `s3_key` | 데이터 버킷의 세션 소리 객체 key `user/<user_id>/session/<session_id>/sound/<file_id>` |
 | `CaptureInput` | `captured_at` | `audio_captures.captured_at` |
 
 - 첫 메시지: `start`

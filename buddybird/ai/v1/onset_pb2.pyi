@@ -73,7 +73,7 @@ class CaptureInput(_message.Message):
     capture_id: _builtins.str
     """audio_captures.client_capture_id"""
     s3_key: _builtins.str
-    """데이터 버킷의 audio_capture/ 객체 key"""
+    """데이터 버킷의 세션 소리 객체 key: user/<user_id>/session/<session_id>/sound/<file_id>"""
     @_builtins.property
     def captured_at(self) -> _timestamp_pb2.Timestamp:
         """audio_captures.captured_at"""
