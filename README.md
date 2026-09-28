@@ -204,7 +204,7 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 | --- | --- | --- |
 | `SessionStart` | `session_id` | `audio_captures.client_session_id` |
 | `CaptureInput` | `capture_id` | `audio_captures.client_capture_id` |
-| `CaptureInput` | `s3_key` | 데이터 버킷의 `audio_capture/` 객체 key |
+| `CaptureInput` | `s3_key` | 데이터 버킷의 세션 소리 객체 key `user/<user_id>/session/<session_id>/sound/<file_id>` |
 | `CaptureInput` | `captured_at` | `audio_captures.captured_at` |
 
 - 첫 메시지: `start`
@@ -293,22 +293,20 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
 
 실제 dev SQS와 데이터 버킷을 사용한다. Docker가 필요 없고 dev 버킷 읽기 권한이 있는 AWS 인증(`aws sso login`)이 필요하다.
 
-```sh
-dev_queue() { aws sqs get-queue-url --region ap-northeast-2 --queue-name "jn-buddybird-dev-$1" --query QueueUrl --output text; }
+1. `.env.example`을 `.env.dev`로 복사하고 dev 리전, 버킷, 두 큐 URL을 채운다. 값은 aws-infra 출력이나 AWS 콘솔에서 확인한다.
+2. 서버를 실행한다.
 
-AWS_REGION=ap-northeast-2 \
-SQS_PARROT_SOUND_DETECTION_QUEUE_URL="$(dev_queue parrot-sound-detection)" \
-SQS_JUDGMENT_RESULT_QUEUE_URL="$(dev_queue judgment-result)" \
-AUDIO_S3_BUCKET='jn-buddybird-v1-data-dev-<계정>-ap-northeast-2' \
-make local port=50061
+```sh
+make local ENV_FILE=.env.dev port=50061
 ```
 
 다른 터미널에서 요청을 보내고 결과를 확인한다. `object_key`는 dev 버킷에 있는 오디오 key를 사용한다.
 
 ```sh
-aws sqs send-message --region ap-northeast-2 --queue-url "$(dev_queue parrot-sound-detection)" \
+set -a; . ./.env.dev; set +a
+aws sqs send-message --queue-url "$SQS_PARROT_SOUND_DETECTION_QUEUE_URL" \
   --message-body '{"type":"cycle.analyze","session_id":"local-test","cycle":1,"sounds":[{"sound_id":"s1","object_key":"<key>","captured_at":"2026-09-27T10:00:00Z"}]}'
-aws sqs receive-message --region ap-northeast-2 --queue-url "$(dev_queue judgment-result)" --wait-time-seconds 10
+aws sqs receive-message --queue-url "$SQS_JUDGMENT_RESULT_QUEUE_URL" --wait-time-seconds 10
 ```
 
 - 사전 확인: 두 큐의 메시지 수가 0인지 확인. dev ai-api 서비스가 실행 중이면 요청을 나눠 가져가므로 사용하지 않음
@@ -383,8 +381,8 @@ docker exec buddybird-ai-api python -m core.grpc.healthcheck
 | 설정 | 값 |
 | --- | --- |
 | 실행 환경 | `ubuntu-24.04-arm` |
-| AWS 리전 | `ap-northeast-2` |
-| ECR 저장소 | `jn-buddybird-ai-api` |
+| AWS 리전 | 저장소 variable `AWS_REGION` |
+| ECR 저장소 | 저장소 variable `ECR_REPOSITORY` |
 | 인증 | OIDC, 저장소 secret `AWS_ROLE_ARN` |
 | 이미지 태그 | 입력 `image_tag`, 비우면 실행 커밋 SHA |
 
@@ -443,8 +441,8 @@ PR을 merge하기 전에 CI 결과와 리뷰를 확인한다.
 
 ## 관련 작업
 
-- [BB-458](https://daheehyeok.atlassian.net/browse/BB-458)
-- [BB-493](https://daheehyeok.atlassian.net/browse/BB-493)
-- [BB-494](https://daheehyeok.atlassian.net/browse/BB-494)
-- [BB-495](https://daheehyeok.atlassian.net/browse/BB-495)
-- [BB-498](https://daheehyeok.atlassian.net/browse/BB-498)
+- BB-458
+- BB-493
+- BB-494
+- BB-495
+- BB-498

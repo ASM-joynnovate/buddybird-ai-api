@@ -11,7 +11,7 @@ def test_analyze_session_request_round_trip() -> None:
     request = onset_pb2.AnalyzeSessionRequest(
         capture=onset_pb2.CaptureInput(
             capture_id="cap_01",
-            s3_key="audio_capture/uid/capture/file/session.wav",
+            s3_key="user/uid/session/sid/sound/fid",
             captured_at=captured_at,
         )
     )
@@ -19,7 +19,7 @@ def test_analyze_session_request_round_trip() -> None:
     parsed = onset_pb2.AnalyzeSessionRequest.FromString(request.SerializeToString())
 
     assert parsed.WhichOneof("message") == "capture"
-    assert parsed.capture.s3_key == "audio_capture/uid/capture/file/session.wav"
+    assert parsed.capture.s3_key == "user/uid/session/sid/sound/fid"
     assert parsed.capture.captured_at.ToDatetime(tzinfo=UTC) == datetime(
         2026, 9, 17, 12, 0, 0, tzinfo=UTC
     )

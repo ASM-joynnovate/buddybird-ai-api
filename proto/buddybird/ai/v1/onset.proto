@@ -26,7 +26,7 @@ message SessionStart {
 message CaptureInput {
   // audio_captures.client_capture_id
   string capture_id = 1;
-  // 데이터 버킷의 audio_capture/ 객체 key
+  // 데이터 버킷의 세션 소리 객체 key: user/<user_id>/session/<session_id>/sound/<file_id>
   string s3_key = 2;
   // audio_captures.captured_at
   google.protobuf.Timestamp captured_at = 3;

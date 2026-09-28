@@ -22,7 +22,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ap-northeast-2
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: login to amazon ecr
         id: login-ecr
@@ -31,7 +31,7 @@ jobs:
       - name: build, tag, and push image to amazon ecr
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: jn-buddybird-ai-api
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
         run: |
           docker build --platform linux/arm64 -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
