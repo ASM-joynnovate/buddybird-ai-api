@@ -8,8 +8,11 @@ setup:
 test:
 	uv run pytest $(ARGS)
 
+# 환경 변수 파일. 예: make local ENV_FILE=.env.dev
+ENV_FILE ?= .env
+
 local:
-	GRPC_PORT=$(or $(port),50051) uv run python -m app.main
+	$(if $(port),GRPC_PORT=$(port)) uv run $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE)) python -m app.main
 
 health:
 	uv run python -m core.grpc.healthcheck --target 127.0.0.1:$(or $(port),50051)
