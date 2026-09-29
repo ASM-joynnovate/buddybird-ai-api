@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from app.health import HealthState
 from app.onset.application.cycle_analyzer import CaptureInput, CycleAnalyzer
 from app.onset.application.cycle_worker import (
     CycleWorker,
@@ -175,6 +176,78 @@ async def test_loud_capture_judged_not_parrot_counts_no_calls() -> None:
         0,
         0,
     )
+
+
+class BrokenGate:
+    async def predict_async(self, audio: np.ndarray, sr: int) -> GateResult:
+        raise RuntimeError("onnx session broken")
+
+
+async def test_inference_failure_is_recorded_and_success_resets() -> None:
+    health = HealthState()
+    broken = CycleAnalyzer(BrokenGate(), load_audio=FakeLoader(CLIPS), health=health)
+
+    await broken.analyze(
+        [CaptureInput("s1", "k/four-a", T0), CaptureInput("s2", "k/four-b", T0)],
+        tolerate_failures=True,
+    )
+
+    assert health.snapshot.inference_failures == 2
+
+    healthy = CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS), health=health)
+    await healthy.analyze([CaptureInput("s3", "k/four-c", T0)], tolerate_failures=False)
+
+    assert health.snapshot.inference_failures == 0
+
+
+async def test_download_failure_and_too_quiet_do_not_touch_inference_failures() -> None:
+    health = HealthState()
+    health.inference_failed()
+    analyzer = CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS), health=health)
+
+    await analyzer.analyze(
+        [CaptureInput("s1", "k/missing", T0), CaptureInput("s2", "k/silent", T0)],
+        tolerate_failures=True,
+    )
+
+    assert health.snapshot.inference_failures == 1
+
+
+class PhaseRecordingQueue(FakeQueue):
+    def __init__(self, inbox: list[list[SqsMessage]], health: HealthState) -> None:
+        super().__init__(inbox)
+        self._health = health
+        self.phase_at_send = ""
+
+    async def send(self, queue_url: str, body: Mapping[str, Any]) -> None:
+        self.phase_at_send = self._health.snapshot.phase
+        await super().send(queue_url, body)
+
+
+async def test_worker_records_idle_and_processing_phases() -> None:
+    health = HealthState()
+    queue = PhaseRecordingQueue([[message([("s1", "k/four-a", T0)])]], health)
+    phases: list[str] = []
+    cycle_worker = CycleWorker(
+        queue,
+        CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS), health=health),
+        request_queue_url=REQUEST_URL,
+        result_queue_url=RESULT_URL,
+        model_version=MODEL_VERSION,
+        health=health,
+    )
+
+    def record_then_stop() -> None:
+        phases.append(health.snapshot.phase)
+        if len(phases) == 2:
+            cycle_worker.stop()
+
+    queue.on_receive = record_then_stop
+    await cycle_worker.run()
+
+    assert phases == ["idle", "idle"]
+    assert queue.phase_at_send == "processing"
+    assert queue.deleted == ["r-1"]
 
 
 async def test_window_drops_captures_older_than_30_seconds() -> None:

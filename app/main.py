@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 
+from app.health import HealthState, health_path
 from app.onset.application.cycle_analyzer import CycleAnalyzer
 from app.onset.application.cycle_worker import CycleWorker
 from app.onset.infra.parrot_gate import ParrotGate
@@ -14,13 +15,16 @@ logger = logging.getLogger(__name__)
 WORKER_STOP_SECONDS = 25.0
 
 
-def create_worker(analyzer: CycleAnalyzer, model_version: str) -> CycleWorker:
+def create_worker(
+    analyzer: CycleAnalyzer, model_version: str, health: HealthState
+) -> CycleWorker:
     return CycleWorker(
         SqsClient(endpoint_url=os.getenv("SQS_ENDPOINT_URL") or None),
         analyzer,
         request_queue_url=os.environ["SQS_PARROT_SOUND_DETECTION_QUEUE_URL"],
         result_queue_url=os.environ["SQS_JUDGMENT_RESULT_QUEUE_URL"],
         model_version=model_version,
+        health=health,
     )
 
 
@@ -35,11 +39,14 @@ async def stop_worker(worker: CycleWorker, task: asyncio.Task[None]) -> None:
 
 
 async def serve() -> None:
+    health = HealthState(health_path())
     gate = ParrotGate()
-    worker = create_worker(CycleAnalyzer(gate), gate.model_version)
+    analyzer = CycleAnalyzer(gate, health=health)
+    worker = create_worker(analyzer, gate.model_version, health)
 
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, gate.preload)
+    health.model_ready()
 
     worker_task = asyncio.create_task(worker.run())
     stop = asyncio.Event()

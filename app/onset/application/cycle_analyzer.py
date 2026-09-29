@@ -12,7 +12,9 @@ from typing import Protocol
 
 import numpy as np
 
+from app.health import HealthState
 from app.onset.domain.emergency import EmergencyAnalyzer
+from app.onset.domain.exceptions import InvalidAudioSignalError
 from app.onset.domain.loudness import is_too_quiet, maxwin_db
 from app.onset.domain.services import OnsetAnalyzer
 from app.onset.infra.parrot_gate import GateResult
@@ -82,10 +84,12 @@ class CycleAnalyzer:
         *,
         load_audio: AudioLoader = download_audio_async,
         max_concurrency: int = MAX_CONCURRENT_CAPTURES,
+        health: HealthState | None = None,
     ) -> None:
         self._gate = gate
         self._load_audio = load_audio
         self._max_concurrency = max_concurrency
+        self._health = health or HealthState()
         self._onset = OnsetAnalyzer()
         self._emergency = EmergencyAnalyzer()
 
@@ -145,12 +149,19 @@ class CycleAnalyzer:
         )
         if too_quiet:
             return _TOO_QUIET
-        gate_result = await self._gate.predict_async(audio, sr)
-        call_count = chirp_count = 0
-        if gate_result.is_parrot:
-            call_count, chirp_count = await asyncio.to_thread(
-                self._count_calls_and_chirps, audio, sr
-            )
+        try:
+            gate_result = await self._gate.predict_async(audio, sr)
+            call_count = chirp_count = 0
+            if gate_result.is_parrot:
+                call_count, chirp_count = await asyncio.to_thread(
+                    self._count_calls_and_chirps, audio, sr
+                )
+        except InvalidAudioSignalError:
+            raise
+        except Exception:
+            self._health.inference_failed()
+            raise
+        self._health.inference_succeeded()
         return _Scored(
             is_parrot=gate_result.is_parrot,
             probability=gate_result.probability,

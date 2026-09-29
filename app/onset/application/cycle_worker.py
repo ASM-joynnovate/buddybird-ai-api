@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, TypeGuard
 
+from app.health import HealthState
 from app.onset.application.cycle_analyzer import (
     CaptureInput,
     CaptureResult,
@@ -141,7 +142,9 @@ class CycleWorker:
         wait_seconds: int = 20,
         heartbeat_seconds: float = 60.0,
         visibility_timeout_seconds: int = 300,
+        health: HealthState | None = None,
     ) -> None:
+        self._health = health or HealthState()
         self._queue = queue
         self._analyzer = analyzer
         self._request_url = request_queue_url
@@ -159,6 +162,7 @@ class CycleWorker:
     async def run(self) -> None:
         logger.info("SQS cycle worker started: %s", self._request_url)
         while not self._stopping.is_set():
+            self._health.waiting()
             try:
                 messages = await self._queue.receive(
                     self._request_url, wait_seconds=self._wait_seconds
@@ -185,6 +189,7 @@ class CycleWorker:
             logger.exception("잘못된 요청 메시지 %s", message.message_id)
             return False
 
+        self._health.processing()
         started = time.monotonic()
         heartbeat = asyncio.create_task(self._keep_invisible(message.receipt_handle))
         try:
