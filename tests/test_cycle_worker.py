@@ -160,6 +160,25 @@ async def test_call_count_includes_calls_outside_emergency_band() -> None:
     assert (result.call_count, result.chirp_count) == (5, 3)
 
 
+class NotParrotGate:
+    async def predict_async(self, audio: np.ndarray, sr: int) -> GateResult:
+        return GateResult(probability=0.2, is_parrot=False)
+
+
+async def test_loud_capture_judged_not_parrot_counts_no_calls() -> None:
+    analyzer = CycleAnalyzer(NotParrotGate(), load_audio=FakeLoader(CLIPS))
+
+    [result] = await analyzer.analyze(
+        [CaptureInput("s1", "k/four-a", T0)], tolerate_failures=False
+    )
+
+    assert (result.is_parrot, result.call_count, result.chirp_count) == (
+        False,
+        0,
+        0,
+    )
+
+
 async def test_grpc_response_carries_call_count() -> None:
     analyzer = CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS))
 
