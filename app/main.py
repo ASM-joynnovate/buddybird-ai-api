@@ -2,7 +2,9 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Callable
 
+from app.alert import SlackAlerts
 from app.health import HealthState, health_path
 from app.onset.application.cycle_analyzer import CycleAnalyzer
 from app.onset.application.cycle_worker import CycleWorker
@@ -47,8 +49,17 @@ async def stop_worker(worker: CycleWorker, task: asyncio.Task[None]) -> None:
         logger.exception("SQS 워커 비정상 종료")
 
 
-async def serve() -> None:
-    health = HealthState(health_path())
+def inference_alert(alerts: SlackAlerts) -> Callable[[bool, int], None]:
+    def notify(unhealthy: bool, failures: int) -> None:
+        if unhealthy:
+            alerts.send_later("ai-api 추론 연속 실패", {"연속 실패": f"{failures}회"})
+        else:
+            alerts.send_later("ai-api 추론 복구", {"직전 연속 실패": f"{failures}회"})
+
+    return notify
+
+
+async def serve(health: HealthState, alerts: SlackAlerts) -> None:
     gate = ParrotGate()
     analyzer = CycleAnalyzer(gate, health=health)
     worker = create_worker(analyzer, gate.model_version, health)
@@ -56,6 +67,8 @@ async def serve() -> None:
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, gate.preload)
     health.model_ready()
+    if alerts.environment == "prod":
+        alerts.send_later("ai-api 시작", {"모델": gate.model_version})
 
     worker_task = asyncio.create_task(worker.run())
     stop = asyncio.Event()
@@ -78,7 +91,16 @@ def main() -> None:
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    asyncio.run(serve())
+    alerts = SlackAlerts.from_env()
+    health = HealthState(health_path(), on_inference_change=inference_alert(alerts))
+    try:
+        asyncio.run(serve(health, alerts))
+    except Exception as e:
+        title = (
+            "ai-api 비정상 종료" if health.snapshot.model_ready else "ai-api 시작 실패"
+        )
+        alerts.send(title, {"오류": f"{type(e).__name__}: {e}"})
+        raise
 
 
 if __name__ == "__main__":

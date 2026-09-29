@@ -56,9 +56,12 @@ class HealthState:
         self,
         path: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
+        on_inference_change: Callable[[bool, int], None] | None = None,
     ) -> None:
+        """on_inference_change(unhealthy, failures)는 연속 실패가 한도에 닿거나 복구될 때 호출된다."""
         self._path = path
         self._clock = clock
+        self._on_inference_change = on_inference_change
         self.snapshot = HealthSnapshot(phase_since=clock())
         self._write()
 
@@ -72,12 +75,17 @@ class HealthState:
         self._set(replace(self.snapshot, phase="processing", phase_since=self._clock()))
 
     def inference_succeeded(self) -> None:
-        if self.snapshot.inference_failures:
+        previous = self.snapshot.inference_failures
+        if previous:
             self._set(replace(self.snapshot, inference_failures=0))
+        if previous >= MAX_INFERENCE_FAILURES and self._on_inference_change:
+            self._on_inference_change(False, previous)
 
     def inference_failed(self) -> None:
         failures = self.snapshot.inference_failures + 1
         self._set(replace(self.snapshot, inference_failures=failures))
+        if failures == MAX_INFERENCE_FAILURES and self._on_inference_change:
+            self._on_inference_change(True, failures)
 
     def _set(self, snapshot: HealthSnapshot) -> None:
         self.snapshot = snapshot
