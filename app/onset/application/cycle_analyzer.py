@@ -1,4 +1,4 @@
-"""사이클 단위 캡처 분석. gRPC 서비스와 SQS 워커가 함께 사용한다."""
+"""사이클 단위 캡처 분석. SQS 워커가 사용한다."""
 
 from __future__ import annotations
 

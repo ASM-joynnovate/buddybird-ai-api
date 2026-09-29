@@ -1,8 +1,8 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import pytest
@@ -13,10 +13,8 @@ from app.onset.application.cycle_worker import (
     InvalidMessageError,
     parse_request,
 )
-from app.onset.application.session_servicer import OnsetServicer
 from app.onset.infra.parrot_gate import GateResult
 from app.onset.infra.sqs import SqsMessage
-from buddybird.ai.v1 import onset_pb2
 
 SAMPLE_RATE = 16000
 REQUEST_URL = "http://sqs/request"
@@ -177,29 +175,6 @@ async def test_loud_capture_judged_not_parrot_counts_no_calls() -> None:
         0,
         0,
     )
-
-
-async def test_grpc_response_carries_call_count() -> None:
-    analyzer = CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS))
-
-    async def requests() -> AsyncIterator[onset_pb2.AnalyzeSessionRequest]:
-        yield onset_pb2.AnalyzeSessionRequest(
-            start=onset_pb2.SessionStart(session_id="session-1")
-        )
-        capture = onset_pb2.CaptureInput(capture_id="c1", s3_key="k/four-a")
-        capture.captured_at.FromDatetime(T0)
-        yield onset_pb2.AnalyzeSessionRequest(capture=capture)
-
-    responses = [
-        r
-        async for r in OnsetServicer(analyzer).AnalyzeSession(
-            requests(), cast(Any, None)
-        )
-    ]
-
-    assert [(r.capture_id, r.call_count, r.chirp_count) for r in responses] == [
-        ("c1", 4, 4)
-    ]
 
 
 async def test_window_drops_captures_older_than_30_seconds() -> None:
