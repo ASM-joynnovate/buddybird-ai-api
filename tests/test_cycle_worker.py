@@ -160,6 +160,32 @@ async def test_window_drops_captures_older_than_30_seconds() -> None:
     assert [r.window_chirp_count for r in results] == [4, 4, 8]
 
 
+class SpyGate(FakeGate):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def predict_async(self, audio: np.ndarray, sr: int) -> GateResult:
+        self.calls += 1
+        return await super().predict_async(audio, sr)
+
+
+async def test_too_quiet_capture_skips_gate() -> None:
+    gate = SpyGate()
+    quiet = (chirps(4) * 0.001).astype(np.float32)
+    analyzer = CycleAnalyzer(gate, load_audio=FakeLoader({"k/quiet": quiet, **CLIPS}))
+
+    results = await analyzer.analyze(
+        [CaptureInput("s1", "k/quiet", T0), CaptureInput("s2", "k/four-a", T0)],
+        tolerate_failures=False,
+    )
+
+    assert gate.calls == 1
+    assert [(r.is_parrot, r.probability, r.chirp_count) for r in results] == [
+        (False, 0.0, 0),
+        (True, 0.9, 4),
+    ]
+
+
 async def test_failed_capture_keeps_request_for_retry() -> None:
     queue = FakeQueue()
     msg = message([("s1", "k/four-a", T0), ("s2", "k/missing", T0)])
