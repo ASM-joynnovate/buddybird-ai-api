@@ -18,11 +18,13 @@ WORKER_STOP_SECONDS = 25.0
 def create_worker(
     analyzer: CycleAnalyzer, model_version: str, health: HealthState
 ) -> CycleWorker:
+    request_queue_url = os.environ["SQS_PARROT_SOUND_DETECTION_QUEUE_URL"]
+    result_queue_url = os.environ["SQS_JUDGMENT_RESULT_QUEUE_URL"]
     return CycleWorker(
         SqsClient(endpoint_url=os.getenv("SQS_ENDPOINT_URL") or None),
         analyzer,
-        request_queue_url=os.environ["SQS_PARROT_SOUND_DETECTION_QUEUE_URL"],
-        result_queue_url=os.environ["SQS_JUDGMENT_RESULT_QUEUE_URL"],
+        request_queue_url=request_queue_url,
+        result_queue_url=result_queue_url,
         model_version=model_version,
         health=health,
     )
