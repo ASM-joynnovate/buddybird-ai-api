@@ -50,6 +50,7 @@ class CaptureResult:
     chirp_count: int
     window_chirp_count: int
     is_emergency: bool
+    too_quiet: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,10 +59,13 @@ class _Scored:
     probability: float
     call_count: int
     chirp_count: int
+    too_quiet: bool = False
 
 
 _FAILED = _Scored(is_parrot=False, probability=0.0, call_count=0, chirp_count=0)
-_TOO_QUIET = _Scored(is_parrot=False, probability=0.0, call_count=0, chirp_count=0)
+_TOO_QUIET = _Scored(
+    is_parrot=False, probability=0.0, call_count=0, chirp_count=0, too_quiet=True
+)
 
 
 class _Window:
@@ -133,6 +137,7 @@ class CycleAnalyzer:
                     chirp_count=scored.chirp_count,
                     window_chirp_count=window_count,
                     is_emergency=window_count >= threshold,
+                    too_quiet=scored.too_quiet,
                 )
             )
         return results

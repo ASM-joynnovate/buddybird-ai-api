@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, TypeGuard
 
+from app import metrics
 from app.health import HealthState
 from app.onset.application.cycle_analyzer import (
     CaptureInput,
@@ -211,19 +212,22 @@ class CycleWorker:
                 request.session_id,
                 request.cycle,
             )
+            metrics.emit(metrics.failure_metrics())
             return False
         finally:
             heartbeat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat
 
+        elapsed = time.monotonic() - started
         logger.info(
             "사이클 분석 완료 session=%s cycle=%d sounds=%d elapsed=%.1fs",
             request.session_id,
             request.cycle,
             len(request.sounds),
-            time.monotonic() - started,
+            elapsed,
         )
+        metrics.emit(metrics.cycle_metrics(results, elapsed))
         return True
 
     async def _release(self, receipt_handle: str) -> None:

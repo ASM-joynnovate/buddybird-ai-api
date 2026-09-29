@@ -439,3 +439,23 @@ async def test_unexpected_handler_error_does_not_stop_worker() -> None:
 
     assert receives == 3
     assert queue.inbox == []
+
+
+async def test_worker_emits_metrics_for_success_and_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ok = message([("s1", "k/four-a", T0), ("s2", "k/silent", T0)])
+    failed = message([("s1", "k/missing", T0)])
+
+    assert await worker(FakeQueue(), FakeLoader(CLIPS)).handle(ok)
+    assert not await worker(FakeQueue(), FakeLoader(CLIPS)).handle(failed)
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    success, failure = lines
+    assert (
+        success["CycleFailures"],
+        success["Captures"],
+        success["ParrotCaptures"],
+        success["TooQuietCaptures"],
+    ) == (0, 2, 1, 1)
+    assert failure["CycleFailures"] == 1
