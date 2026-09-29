@@ -149,7 +149,7 @@ class CycleAnalyzer:
         call_count = chirp_count = 0
         if gate_result.is_parrot:
             call_count, chirp_count = await asyncio.to_thread(
-                self._count_calls, audio, sr
+                self._count_calls_and_chirps, audio, sr
             )
         return _Scored(
             is_parrot=gate_result.is_parrot,
@@ -158,8 +158,7 @@ class CycleAnalyzer:
             chirp_count=chirp_count,
         )
 
-    def _count_calls(self, audio: np.ndarray, sr: int) -> tuple[int, int]:
-        """전체 울음 수와 위급 음역대 안 울음 수를 돌려준다."""
+    def _count_calls_and_chirps(self, audio: np.ndarray, sr: int) -> tuple[int, int]:
         samples = audio.astype(np.float64)
         analysis = self._onset.analyze(samples=samples, sample_rate=sr)
         judgement = self._emergency.judge(analysis=analysis, samples=samples)
