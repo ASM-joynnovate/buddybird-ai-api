@@ -14,6 +14,7 @@ SQS 요청 큐를 설정하면 사이클 분석 워커도 같은 프로세스에
 | `app/onset/domain/entities.py` | 울음·분석 결과와 `OnsetCriteria` |
 | `app/onset/domain/services.py` | `OnsetAnalyzer`: 울음 검출 |
 | `app/onset/domain/emergency.py` | `EmergencyAnalyzer`, `EmergencyCriteria`: 울음별 음역대 판정 |
+| `app/onset/domain/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
 | `app/onset/domain/exceptions.py` | 분석 입력·설정 오류 |
 | `core/grpc/` | 포트 설정, 헬스체크 CLI, 오류 인터셉터 |
 | `proto/buddybird/ai/v1/onset.proto` | 분석 RPC 계약 |
@@ -123,7 +124,36 @@ status.details[0].Unpack(info)
 
 ## 울음 분석과 위급 판정
 
-두 도메인 분석기는 캡처 하나를 대상으로 한다. gRPC와 SQS 워커는 `CycleAnalyzer`를 통해 앵무 소리로 판정된 캡처에 이 분석기를 적용한다.
+`CycleAnalyzer`는 캡처마다 다음 순서로 분석한다. gRPC와 SQS 워커가 같은 순서를 쓴다.
+
+```
+S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate) → 울음 검출 → 울음별 음역대 판정
+```
+
+- 음량 게이트에서 걸리면 이후 단계를 건너뛰고 앵무가 아닌 캡처로 처리한다.
+- 울음 검출과 음역대 판정은 앵무 소리로 판정된 캡처에만 한다.
+
+| 용어 | 뜻 | 응답 필드 |
+| --- | --- | --- |
+| 울음(call) | 울음 검출이 찾은 소리 구간 하나, 음역대 무관 | `call_count` |
+| 짹(chirp) | 울음 중 대표 음높이가 위급 음역대 안인 것 | `chirp_count` |
+
+짹은 울음의 일부이므로 `chirp_count`는 항상 `call_count` 이하다.
+
+### 음량 게이트
+
+`maxwin_db`는 100 ms 창을 100 ms 간격으로 옮기며 구한 RMS의 최댓값을 dBFS로 돌려준다.
+긴 무음 속 짧은 울음이 평균에 희석되지 않도록 전체 RMS 대신 최대 창을 쓴다. 창보다 짧은 캡처는 전체를 한 창으로 본다.
+
+| 기준 | 값 |
+| --- | --- |
+| 창 길이·간격 | 100 ms |
+| too_quiet | `maxwin_db` < −39 dBFS, −39.0은 통과 |
+
+- 기준 출처: parrot-mimicry `docs/step1-loudness-gate/spec-step1-loudness-gate.md`, 계산은 `scripts/step2/classify_folder.py`의 `maxwin_db()`와 같다.
+- too_quiet 캡처 결과: `is_parrot=false`, `score=0.0`, `call_count=0`, `chirp_count=0`. 결과 형식에 별도 필드는 없고, 캡처마다 `capture <id> maxwin_db=<값> too_quiet=<판정>`을 INFO 로그로 남긴다.
+
+두 도메인 분석기(울음 검출, 울음별 음역대 판정)는 캡처 하나를 대상으로 한다.
 
 ### 울음 검출
 
@@ -141,7 +171,7 @@ status.details[0].Unpack(info)
 ### 울음별 음역대 판정
 
 `EmergencyAnalyzer`는 검출된 울음마다 대표 음높이를 구하고 음역대 안인지 판정한다.
-`EmergencyJudgement.in_band_chirps`가 캡처의 음역대 안 울음이다.
+`EmergencyJudgement.in_band_chirps`가 캡처의 음역대 안 울음, 즉 짹이다.
 
 | 기준 | 기본값 |
 | --- | --- |
@@ -451,3 +481,7 @@ PR을 merge하기 전에 CI 결과와 리뷰를 확인한다.
 - BB-494
 - BB-495
 - BB-498
+- BB-509
+- BB-538
+- BB-544
+- BB-552
