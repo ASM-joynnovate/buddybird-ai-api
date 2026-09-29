@@ -38,9 +38,8 @@ class EmergencyCriteria:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Chirp:
-    """울음 하나와 그 대표 음높이."""
+    """울음 하나의 대표 음높이와 음역대 판정."""
 
-    call: Call
     peak_hz: float
     in_band: bool
 
@@ -83,7 +82,6 @@ class EmergencyAnalyzer:
             sample_rate=call.sample_rate,
         )
         return Chirp(
-            call=call,
             peak_hz=peak_hz,
             in_band=self.criteria.band_low_hz <= peak_hz <= self.criteria.band_high_hz,
         )

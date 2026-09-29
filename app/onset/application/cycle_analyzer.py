@@ -62,7 +62,6 @@ class _Scored:
     too_quiet: bool = False
 
 
-_FAILED = _Scored(is_parrot=False, probability=0.0, call_count=0, chirp_count=0)
 _TOO_QUIET = _Scored(
     is_parrot=False, probability=0.0, call_count=0, chirp_count=0, too_quiet=True
 )
@@ -97,24 +96,16 @@ class CycleAnalyzer:
         self._onset = OnsetAnalyzer()
         self._emergency = EmergencyAnalyzer()
 
-    async def analyze(
-        self, captures: Sequence[CaptureInput], *, tolerate_failures: bool
-    ) -> list[CaptureResult]:
+    async def analyze(self, captures: Sequence[CaptureInput]) -> list[CaptureResult]:
         """captured_at 순으로 정렬한 결과를 돌려준다.
 
-        tolerate_failures가 False면 캡처 하나라도 실패할 때 예외를 올린다.
+        캡처 하나라도 실패하면 ExceptionGroup을 올린다. 워커는 사이클 전체를 재시도한다.
         """
         semaphore = asyncio.Semaphore(self._max_concurrency)
 
         async def score(cap: CaptureInput) -> _Scored:
             async with semaphore:
-                try:
-                    return await self._score(cap)
-                except Exception:
-                    if not tolerate_failures:
-                        raise
-                    logger.exception("capture %s 분석 실패", cap.capture_id)
-                    return _FAILED
+                return await self._score(cap)
 
         async with asyncio.TaskGroup() as tg:
             tasks = [tg.create_task(score(cap)) for cap in captures]

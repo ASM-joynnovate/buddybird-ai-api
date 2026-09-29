@@ -63,5 +63,4 @@ class Call:
 class OnsetAnalysis:
     """캡처 1개에서 검출한 울음."""
 
-    sample_rate: int
     calls: tuple[Call, ...]

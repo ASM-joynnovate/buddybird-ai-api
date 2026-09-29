@@ -26,7 +26,6 @@ class OnsetAnalyzer:
             raise InvalidAudioSignalError(detail="non-finite sample")
 
         return OnsetAnalysis(
-            sample_rate=sample_rate,
             calls=tuple(self._detect_calls(signal=signal, sample_rate=sample_rate)),
         )
 

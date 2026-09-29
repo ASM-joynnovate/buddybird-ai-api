@@ -55,5 +55,5 @@ strict = true
 files = ["app", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "joblib.*", "librosa.*", "onnxruntime.*", "sklearn.*"]
+module = ["boto3.*", "joblib.*", "librosa.*", "onnxruntime.*"]
 ignore_missing_imports = true

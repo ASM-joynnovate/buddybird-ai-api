@@ -194,9 +194,7 @@ class CycleWorker:
         started = time.monotonic()
         heartbeat = asyncio.create_task(self._keep_invisible(message.receipt_handle))
         try:
-            results = await self._analyzer.analyze(
-                request.sounds, tolerate_failures=False
-            )
+            results = await self._analyzer.analyze(request.sounds)
             await self._queue.send(
                 self._result_url,
                 build_result(request, results, self._model_version),

@@ -152,9 +152,7 @@ async def test_call_count_includes_calls_outside_emergency_band() -> None:
     mixed = np.concatenate([chirps(3), chirps(2, frequency=2000.0)])
     analyzer = CycleAnalyzer(FakeGate(), load_audio=FakeLoader({"k/mixed": mixed}))
 
-    [result] = await analyzer.analyze(
-        [CaptureInput("s1", "k/mixed", T0)], tolerate_failures=False
-    )
+    [result] = await analyzer.analyze([CaptureInput("s1", "k/mixed", T0)])
 
     assert (result.call_count, result.chirp_count) == (5, 3)
 
@@ -167,9 +165,7 @@ class NotParrotGate:
 async def test_loud_capture_judged_not_parrot_counts_no_calls() -> None:
     analyzer = CycleAnalyzer(NotParrotGate(), load_audio=FakeLoader(CLIPS))
 
-    [result] = await analyzer.analyze(
-        [CaptureInput("s1", "k/four-a", T0)], tolerate_failures=False
-    )
+    [result] = await analyzer.analyze([CaptureInput("s1", "k/four-a", T0)])
 
     assert (result.is_parrot, result.call_count, result.chirp_count) == (
         False,
@@ -187,15 +183,14 @@ async def test_inference_failure_is_recorded_and_success_resets() -> None:
     health = HealthState()
     broken = CycleAnalyzer(BrokenGate(), load_audio=FakeLoader(CLIPS), health=health)
 
-    await broken.analyze(
-        [CaptureInput("s1", "k/four-a", T0), CaptureInput("s2", "k/four-b", T0)],
-        tolerate_failures=True,
-    )
+    for key in ("k/four-a", "k/four-b"):
+        with pytest.raises(ExceptionGroup):
+            await broken.analyze([CaptureInput("s1", key, T0)])
 
     assert health.snapshot.inference_failures == 2
 
     healthy = CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS), health=health)
-    await healthy.analyze([CaptureInput("s3", "k/four-c", T0)], tolerate_failures=False)
+    await healthy.analyze([CaptureInput("s3", "k/four-c", T0)])
 
     assert health.snapshot.inference_failures == 0
 
@@ -205,10 +200,9 @@ async def test_download_failure_and_too_quiet_do_not_touch_inference_failures() 
     health.inference_failed()
     analyzer = CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS), health=health)
 
-    await analyzer.analyze(
-        [CaptureInput("s1", "k/missing", T0), CaptureInput("s2", "k/silent", T0)],
-        tolerate_failures=True,
-    )
+    with pytest.raises(ExceptionGroup):
+        await analyzer.analyze([CaptureInput("s1", "k/missing", T0)])
+    await analyzer.analyze([CaptureInput("s2", "k/silent", T0)])
 
     assert health.snapshot.inference_failures == 1
 
@@ -258,8 +252,7 @@ async def test_window_drops_captures_older_than_30_seconds() -> None:
             CaptureInput("s1", "k/four-a", T0),
             CaptureInput("s2", "k/four-b", T0 + timedelta(seconds=40)),
             CaptureInput("s3", "k/four-c", T0 + timedelta(seconds=70)),
-        ],
-        tolerate_failures=False,
+        ]
     )
 
     assert [r.window_chirp_count for r in results] == [4, 4, 8]
@@ -280,8 +273,7 @@ async def test_too_quiet_capture_skips_gate() -> None:
     analyzer = CycleAnalyzer(gate, load_audio=FakeLoader({"k/quiet": quiet, **CLIPS}))
 
     results = await analyzer.analyze(
-        [CaptureInput("s1", "k/quiet", T0), CaptureInput("s2", "k/four-a", T0)],
-        tolerate_failures=False,
+        [CaptureInput("s1", "k/quiet", T0), CaptureInput("s2", "k/four-a", T0)]
     )
 
     assert gate.calls == 1
@@ -301,20 +293,6 @@ async def test_failed_capture_keeps_request_for_retry() -> None:
 
     assert queue.sent == []
     assert queue.deleted == []
-
-
-async def test_tolerant_analysis_counts_failed_capture_as_zero() -> None:
-    analyzer = CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS))
-
-    results = await analyzer.analyze(
-        [CaptureInput("s1", "k/missing", T0), CaptureInput("s2", "k/four-a", T0)],
-        tolerate_failures=True,
-    )
-
-    assert [(r.capture_id, r.call_count, r.chirp_count) for r in results] == [
-        ("s1", 0, 0),
-        ("s2", 4, 4),
-    ]
 
 
 @pytest.mark.parametrize(
