@@ -113,11 +113,13 @@ def build_result(
         "model_version": model_version,
         "analyzed_at": datetime.now(UTC).isoformat(),
         "is_emergency": any(r.is_emergency for r in results),
+        "call_count": sum(r.call_count for r in results),
         "sounds": [
             {
                 "sound_id": r.capture_id,
                 "is_parrot": r.is_parrot,
                 "score": r.probability,
+                "call_count": r.call_count,
                 "chirp_count": r.chirp_count,
                 "window_chirp_count": r.window_chirp_count,
                 "is_emergency": r.is_emergency,

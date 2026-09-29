@@ -1,8 +1,8 @@
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -13,8 +13,10 @@ from app.onset.application.cycle_worker import (
     InvalidMessageError,
     parse_request,
 )
+from app.onset.application.session_servicer import OnsetServicer
 from app.onset.infra.parrot_gate import GateResult
 from app.onset.infra.sqs import SqsMessage
+from buddybird.ai.v1 import onset_pb2
 
 SAMPLE_RATE = 16000
 REQUEST_URL = "http://sqs/request"
@@ -23,12 +25,12 @@ MODEL_VERSION = "parrot-sound-gate@test"
 T0 = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
 
 
-def chirps(count: int) -> np.ndarray:
+def chirps(count: int, frequency: float = 5000.0) -> np.ndarray:
     silence = np.zeros(int(0.15 * SAMPLE_RATE))
     times = np.arange(int(0.12 * SAMPLE_RATE)) / SAMPLE_RATE
     parts = [silence]
     for _ in range(count):
-        parts.extend([0.5 * np.sin(2 * np.pi * 5000.0 * times), silence])
+        parts.extend([0.5 * np.sin(2 * np.pi * frequency * times), silence])
     return np.concatenate(parts).astype(np.float32)
 
 
@@ -143,6 +145,42 @@ async def test_publishes_result_in_captured_order_and_deletes_request() -> None:
         for s in result["sounds"]
     ] == [("s1", True, 4, 4), ("s2", True, 4, 8), ("s3", False, 0, 8)]
     assert [s["is_emergency"] for s in result["sounds"]] == [False, True, True]
+    assert [s["call_count"] for s in result["sounds"]] == [4, 4, 0]
+    assert result["call_count"] == 8
+
+
+async def test_call_count_includes_calls_outside_emergency_band() -> None:
+    mixed = np.concatenate([chirps(3), chirps(2, frequency=2000.0)])
+    analyzer = CycleAnalyzer(FakeGate(), load_audio=FakeLoader({"k/mixed": mixed}))
+
+    [result] = await analyzer.analyze(
+        [CaptureInput("s1", "k/mixed", T0)], tolerate_failures=False
+    )
+
+    assert (result.call_count, result.chirp_count) == (5, 3)
+
+
+async def test_grpc_response_carries_call_count() -> None:
+    analyzer = CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS))
+
+    async def requests() -> AsyncIterator[onset_pb2.AnalyzeSessionRequest]:
+        yield onset_pb2.AnalyzeSessionRequest(
+            start=onset_pb2.SessionStart(session_id="session-1")
+        )
+        capture = onset_pb2.CaptureInput(capture_id="c1", s3_key="k/four-a")
+        capture.captured_at.FromDatetime(T0)
+        yield onset_pb2.AnalyzeSessionRequest(capture=capture)
+
+    responses = [
+        r
+        async for r in OnsetServicer(analyzer).AnalyzeSession(
+            requests(), cast(Any, None)
+        )
+    ]
+
+    assert [(r.capture_id, r.call_count, r.chirp_count) for r in responses] == [
+        ("c1", 4, 4)
+    ]
 
 
 async def test_window_drops_captures_older_than_30_seconds() -> None:
@@ -180,9 +218,11 @@ async def test_too_quiet_capture_skips_gate() -> None:
     )
 
     assert gate.calls == 1
-    assert [(r.is_parrot, r.probability, r.chirp_count) for r in results] == [
-        (False, 0.0, 0),
-        (True, 0.9, 4),
+    assert [
+        (r.is_parrot, r.probability, r.call_count, r.chirp_count) for r in results
+    ] == [
+        (False, 0.0, 0, 0),
+        (True, 0.9, 4, 4),
     ]
 
 
@@ -204,7 +244,10 @@ async def test_tolerant_analysis_counts_failed_capture_as_zero() -> None:
         tolerate_failures=True,
     )
 
-    assert [(r.capture_id, r.chirp_count) for r in results] == [("s1", 0), ("s2", 4)]
+    assert [(r.capture_id, r.call_count, r.chirp_count) for r in results] == [
+        ("s1", 0, 0),
+        ("s2", 4, 4),
+    ]
 
 
 @pytest.mark.parametrize(

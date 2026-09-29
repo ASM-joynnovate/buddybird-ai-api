@@ -44,6 +44,7 @@ class CaptureResult:
     capture_id: str
     is_parrot: bool
     probability: float
+    call_count: int
     chirp_count: int
     window_chirp_count: int
     is_emergency: bool
@@ -53,11 +54,12 @@ class CaptureResult:
 class _Scored:
     is_parrot: bool
     probability: float
+    call_count: int
     chirp_count: int
 
 
-_FAILED = _Scored(is_parrot=False, probability=0.0, chirp_count=0)
-_TOO_QUIET = _Scored(is_parrot=False, probability=0.0, chirp_count=0)
+_FAILED = _Scored(is_parrot=False, probability=0.0, call_count=0, chirp_count=0)
+_TOO_QUIET = _Scored(is_parrot=False, probability=0.0, call_count=0, chirp_count=0)
 
 
 class _Window:
@@ -123,6 +125,7 @@ class CycleAnalyzer:
                     capture_id=cap.capture_id,
                     is_parrot=scored.is_parrot,
                     probability=scored.probability,
+                    call_count=scored.call_count,
                     chirp_count=scored.chirp_count,
                     window_chirp_count=window_count,
                     is_emergency=window_count >= threshold,
@@ -143,17 +146,21 @@ class CycleAnalyzer:
         if too_quiet:
             return _TOO_QUIET
         gate_result = await self._gate.predict_async(audio, sr)
-        chirp_count = 0
+        call_count = chirp_count = 0
         if gate_result.is_parrot:
-            chirp_count = await asyncio.to_thread(self._count_chirps, audio, sr)
+            call_count, chirp_count = await asyncio.to_thread(
+                self._count_calls, audio, sr
+            )
         return _Scored(
             is_parrot=gate_result.is_parrot,
             probability=gate_result.probability,
+            call_count=call_count,
             chirp_count=chirp_count,
         )
 
-    def _count_chirps(self, audio: np.ndarray, sr: int) -> int:
+    def _count_calls(self, audio: np.ndarray, sr: int) -> tuple[int, int]:
+        """전체 울음 수와 위급 음역대 안 울음 수를 돌려준다."""
         samples = audio.astype(np.float64)
         analysis = self._onset.analyze(samples=samples, sample_rate=sr)
         judgement = self._emergency.judge(analysis=analysis, samples=samples)
-        return len(judgement.in_band_chirps)
+        return len(analysis.calls), len(judgement.in_band_chirps)

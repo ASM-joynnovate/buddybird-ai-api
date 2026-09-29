@@ -101,6 +101,7 @@ class AnalyzeSessionResponse(_message.Message):
     CHIRP_COUNT_FIELD_NUMBER: _builtins.int
     WINDOW_CHIRP_COUNT_FIELD_NUMBER: _builtins.int
     IS_EMERGENCY_FIELD_NUMBER: _builtins.int
+    CALL_COUNT_FIELD_NUMBER: _builtins.int
     capture_id: _builtins.str
     chirp_count: _builtins.int
     """이 캡처에서 음역대 안에 든 짹 수"""
@@ -108,6 +109,8 @@ class AnalyzeSessionResponse(_message.Message):
     """이 캡처까지 최근 시간 창 안에 든 음역대 안 짹 수"""
     is_emergency: _builtins.bool
     """window_chirp_count가 위급 기준 이상이면 true"""
+    call_count: _builtins.int
+    """앵무 소리로 판정된 캡처의 전체 울음 수, 음역대 무관. 앵무가 아니면 0"""
     def __init__(
         self,
         *,
@@ -115,10 +118,11 @@ class AnalyzeSessionResponse(_message.Message):
         chirp_count: _builtins.int = ...,
         window_chirp_count: _builtins.int = ...,
         is_emergency: _builtins.bool = ...,
+        call_count: _builtins.int = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["capture_id", b"capture_id", "chirp_count", b"chirp_count", "is_emergency", b"is_emergency", "window_chirp_count", b"window_chirp_count"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["call_count", b"call_count", "capture_id", b"capture_id", "chirp_count", b"chirp_count", "is_emergency", b"is_emergency", "window_chirp_count", b"window_chirp_count"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 

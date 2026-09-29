@@ -160,6 +160,9 @@ status.details[0].Unpack(info)
 `window_chirp_count >= 7`이면 응답의 `is_emergency`가 true다.
 시간 창은 분석 호출마다 초기화되며, gRPC 스트림 간 또는 SQS 사이클 간에 누적되지 않는다.
 
+위급 판정과 별개로, 앵무 소리로 판정된 캡처는 음역대와 관계없이 onset이 검출한 울음 전체 수를 `call_count`로 응답한다.
+앵무가 아니거나 음량이 부족하거나 분석에 실패한 캡처의 `call_count`는 0이다.
+
 저장소 루트에서 다음 예제로 도메인 분석기 두 결과를 확인할 수 있다.
 
 ```sh
@@ -209,9 +212,9 @@ proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커�
 
 - 첫 메시지: `start`
 - 이후 메시지: `captured_at` 순서의 `capture`. 순서가 달라도 서버가 `captured_at`으로 정렬
-- 응답: 캡처마다 `capture_id`, `chirp_count`, `window_chirp_count`, `is_emergency`를 포함한 메시지 1개
+- 응답: 캡처마다 `capture_id`, `call_count`, `chirp_count`, `window_chirp_count`, `is_emergency`를 포함한 메시지 1개
 - 응답 시점: 클라이언트가 전송을 끝낸 뒤 `captured_at` 순서로 한꺼번에 전송
-- 캡처 분석: 최대 4개씩 동시에 처리, 실패한 캡처는 `chirp_count` 0
+- 캡처 분석: 최대 4개씩 동시에 처리, 실패한 캡처는 `call_count`와 `chirp_count` 0
 - 시간 창: 30초, 스트림이 열려 있는 동안만 유지, 스트림이 끊기면 초기화
 - 서버 등록: `app/main.py`에서 `OnsetServicer` 등록
 
@@ -262,15 +265,17 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
   "model_version": "parrot-sound-gate@v2.0.0",
   "analyzed_at": "2026-09-23T10:05:12.345678+00:00",
   "is_emergency": false,
+  "call_count": 11,
   "sounds": [
     {"sound_id": "0199…", "is_parrot": true, "score": 0.93,
-     "chirp_count": 4, "window_chirp_count": 6, "is_emergency": false}
+     "call_count": 11, "chirp_count": 4, "window_chirp_count": 6, "is_emergency": false}
   ]
 }
 ```
 
 - `sounds`: `captured_at` 순서
-- `score`: 앵무 소리 판정 확률. `is_parrot`이 false면 `chirp_count` 0
+- `score`: 앵무 소리 판정 확률. `is_parrot`이 false면 `call_count`와 `chirp_count` 0
+- `call_count`: 캡처의 울음 전체 수, 음역대 무관. 최상위 값은 사이클 안 캡처의 합
 - `window_chirp_count`: 직전 30초 안 같은 사이클 캡처의 chirp 합. 사이클 사이에는 이어지지 않음
 - `is_emergency`: 캡처별로 `window_chirp_count` 7 이상. 최상위 값은 캡처 중 하나라도 true
 

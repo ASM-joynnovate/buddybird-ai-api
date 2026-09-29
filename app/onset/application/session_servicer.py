@@ -44,6 +44,7 @@ class OnsetServicer(onset_pb2_grpc.OnsetServiceServicer):
         for result in results:
             yield onset_pb2.AnalyzeSessionResponse(
                 capture_id=result.capture_id,
+                call_count=result.call_count,
                 chirp_count=result.chirp_count,
                 window_chirp_count=result.window_chirp_count,
                 is_emergency=result.is_emergency,
