@@ -126,7 +126,7 @@ status.details[0].Unpack(info)
 
 `CycleAnalyzer`는 캡처마다 다음 순서로 분석한다. gRPC와 SQS 워커가 같은 순서를 쓴다.
 
-```
+```text
 S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate) → 울음 검출 → 울음별 음역대 판정
 ```
 
@@ -139,6 +139,7 @@ S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate)
 | 짹(chirp) | 울음 중 대표 음높이가 위급 음역대 안인 것 | `chirp_count` |
 
 짹은 울음의 일부이므로 `chirp_count`는 항상 `call_count` 이하다.
+두 도메인 분석기(울음 검출, 울음별 음역대 판정)는 캡처 하나를 대상으로 한다.
 
 ### 음량 게이트
 
@@ -148,12 +149,10 @@ S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate)
 | 기준 | 값 |
 | --- | --- |
 | 창 길이·간격 | 100 ms |
-| too_quiet | `maxwin_db` < −39 dBFS, −39.0은 통과 |
+| `too_quiet` | `maxwin_db` < −39 dBFS, −39.0은 통과 |
 
 - 기준 출처: parrot-mimicry `docs/step1-loudness-gate/spec-step1-loudness-gate.md`, 계산은 `scripts/step2/classify_folder.py`의 `maxwin_db()`와 같다.
-- too_quiet 캡처 결과: `is_parrot=false`, `score=0.0`, `call_count=0`, `chirp_count=0`. 결과 형식에 별도 필드는 없고, 캡처마다 `capture <id> maxwin_db=<값> too_quiet=<판정>`을 INFO 로그로 남긴다.
-
-두 도메인 분석기(울음 검출, 울음별 음역대 판정)는 캡처 하나를 대상으로 한다.
+- `too_quiet` 캡처 결과: `is_parrot=false`, `score=0.0`, `call_count=0`, `chirp_count=0`. 결과 형식에 별도 필드는 없고, 캡처마다 `capture <id> maxwin_db=<값> too_quiet=<판정>`을 INFO 로그로 남긴다.
 
 ### 울음 검출
 
