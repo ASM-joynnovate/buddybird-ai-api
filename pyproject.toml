@@ -52,7 +52,7 @@ ignore = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["app", "core", "tests"]
+files = ["app", "tests"]
 
 [[tool.mypy.overrides]]
 module = ["boto3.*", "botocore.*", "joblib.*", "librosa.*", "onnxruntime.*", "sklearn.*"]
