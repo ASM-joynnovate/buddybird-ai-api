@@ -55,19 +55,17 @@ def test_score_metrics_are_omitted_when_every_capture_is_too_quiet() -> None:
     assert "ScoreStdDev" not in values
 
 
-def test_emit_writes_emf_json_line(
+def test_emit_writes_structured_log_line(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("METRICS_ENVIRONMENT", "dev")
+    monkeypatch.setenv("APP_ENV", "dev")
 
     metrics.emit({"CycleFailures": 1, "CycleSeconds": 2.0})
 
     record = json.loads(capsys.readouterr().out)
-    [directive] = record["_aws"]["CloudWatchMetrics"]
-    assert directive["Namespace"] == metrics.NAMESPACE
-    assert directive["Dimensions"] == [["Environment"]]
-    assert directive["Metrics"] == [
-        {"Name": "CycleFailures", "Unit": "Count"},
-        {"Name": "CycleSeconds", "Unit": "Seconds"},
-    ]
-    assert (record["Environment"], record["CycleFailures"]) == ("dev", 1)
+    assert record == {
+        "event": "cycle_metrics",
+        "env": "dev",
+        "CycleFailures": 1,
+        "CycleSeconds": 2.0,
+    }
