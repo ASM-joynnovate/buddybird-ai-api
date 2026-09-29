@@ -9,7 +9,8 @@ HTTP나 gRPC로 요청을 받지 않으며, 상태 확인은 [헬스체크](#헬
 | --- | --- |
 | `app/main.py` | 모델 로딩, SQS 워커 실행과 종료 처리 |
 | `app/health.py` | 워커 헬스 상태 기록과 컨테이너 헬스체크 명령 |
-| `app/metrics.py` | 사이클 분석 지표를 CloudWatch EMF 로그로 기록 |
+| `app/alert.py` | 운영 알림을 Slack 수신 웹훅으로 전송 |
+| `app/metrics.py` | 사이클 분석 지표를 구조화 로그로 기록 |
 | `app/onset/application/` | 사이클 분석, SQS 워커 |
 | `app/onset/infra/` | 앵무 소리 판정 모델, S3 오디오 로더, SQS 클라이언트 |
 | `app/onset/domain/entities.py` | 울음·분석 결과와 `OnsetCriteria` |
@@ -17,7 +18,6 @@ HTTP나 gRPC로 요청을 받지 않으며, 상태 확인은 [헬스체크](#헬
 | `app/onset/domain/emergency.py` | `EmergencyAnalyzer`, `EmergencyCriteria`: 울음별 음역대 판정 |
 | `app/onset/domain/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
 | `app/onset/domain/exceptions.py` | 분석 입력·설정 오류 |
-| `core/errors.py` | 도메인 오류의 기반 `CustomError` |
 | `tests/` | 분석 로직, SQS 워커, 헬스체크, 지표 테스트 |
 
 ## 준비
@@ -39,7 +39,7 @@ CI와 같은 잠금 버전으로 설치하려면 `uv sync --locked`를 사용한
 ## 실행
 
 워커를 실행한다. 모델 다운로드·로딩이 끝나면 요청 큐 조회를 시작한다.
-요청 큐와 결과 큐 URL은 필수이며, 없으면 시작할 때 오류로 종료한다. 큐 연결 방법은 [로컬 실행](#로컬-실행)을 따른다.
+요청 큐와 결과 큐 URL은 필수이며, 없거나 비어 있으면 모델을 불러오기 전에 오류로 종료한다. 큐 연결 방법은 [로컬 실행](#로컬-실행)을 따른다.
 캡처 분석에는 `AUDIO_S3_BUCKET`과 해당 객체를 읽을 수 있는 AWS 인증이 필요하다.
 
 ```sh
@@ -50,7 +50,8 @@ make local ENV_FILE=.env.dev
 | --- | --- |
 | 로그 수준 환경 변수 | `LOG_LEVEL`, 기본값 `INFO` |
 | 헬스 상태 파일 환경 변수 | `HEALTH_FILE`, 기본값 임시 디렉터리의 `buddybird-ai-api-health.json` |
-| 지표 환경 변수 | `METRICS_ENVIRONMENT`, 지표의 `Environment` 차원 값. 기본값 `local` |
+| 실행 환경 변수 | `APP_ENV`(`dev`, `prod`). 지표 로그와 알림에 표시. 기본값 `local` |
+| 알림 웹훅 환경 변수 | `ALERT_SLACK_WEBHOOK_URL`. 비우면 알림 없이 로그만 남김 |
 
 - 종료: `Ctrl+C`. `SIGINT`, `SIGTERM`을 받으면 새 수신을 멈추고 처리 중인 사이클을 최대 25초 기다린다
 - 워커가 스스로 끝나면 프로세스를 오류로 종료한다. ECS가 task를 다시 띄운다
@@ -88,36 +89,58 @@ ECS 작업 정의에 권장하는 설정(aws-infra BB-439):
 | retries | 3 |
 | startPeriod | 120초. 모델 로딩 실측 후 조정 |
 
+## 알림
+
+`ALERT_SLACK_WEBHOOK_URL`이 있으면 아래 상황에서 Slack으로 알림을 보낸다. 모든 알림에 `APP_ENV`와 호스트 이름이 들어간다.
+전송은 스레드에서 하고, 실패해도 로그만 남기고 워커는 계속 동작한다.
+
+| 알림 | 조건 | 환경 |
+| --- | --- | --- |
+| `ai-api 시작` | 모델 로딩이 끝나 워커가 시작됨. 모델 버전 포함 | `prod`만 |
+| `ai-api 시작 실패` | 모델 로딩 전 오류로 종료(모델 파일, 필수 환경 변수 등) | 전체 |
+| `ai-api 비정상 종료` | 모델 로딩 후 예외로 종료(워커가 스스로 끝난 경우 포함) | 전체 |
+| `ai-api 추론 연속 실패` | 추론 연속 실패가 3회에 도달. 헬스체크 비정상 기준과 같음 | 전체 |
+| `ai-api 추론 복구` | 연속 3회 이상 실패한 뒤 추론이 다시 성공 | 전체 |
+
+- 5회 재시도 후 DLQ로 간 사이클은 aws-infra의 DLQ 알람(이메일)이 알린다
+- 운영에서는 웹훅 주소를 SSM Parameter Store 보안 문자열에 두고 ECS 작업 정의의 `secrets`로 전달한다(aws-infra BB-439)
+
 ## 지표
 
-예외 없이 틀린 값을 내는 모델 이상은 헬스체크로 잡을 수 없다. 워커는 사이클마다 지표를 CloudWatch EMF 형식 JSON 한 줄로 표준 출력에 남기고,
-CloudWatch Logs가 이를 네임스페이스 `BuddyBird/AiApi`, 차원 `Environment`의 지표로 추출한다. 별도 IAM 권한은 필요 없다.
+사이클마다 지표를 JSON 한 줄(`"event": "cycle_metrics"`)로 표준 출력에 남긴다. CloudWatch 사용자 지정 지표를 만들지 않아 추가 비용이 없고,
+예외 없이 틀린 값을 내는 모델 이상(앵무 판정 0%, score 고정)을 CloudWatch Logs Insights로 조회해 확인한다.
 
-| 지표 | 단위 | 값 |
-| --- | --- | --- |
-| `CycleFailures` | Count | 성공 0, 분석 실패 1. 실패한 사이클은 이 값만 남김 |
-| `Captures` | Count | 사이클 캡처 수 |
-| `ParrotCaptures` | Count | 앵무 소리로 판정된 캡처 수 |
-| `TooQuietCaptures` | Count | 음량 게이트에서 걸린 캡처 수 |
-| `CallCount` | Count | 울음 전체 수 합계 |
-| `EmergencyCycles` | Count | 위급 캡처가 있으면 1 |
-| `CycleSeconds` | Seconds | 사이클 처리 시간 |
-| `ScoreMean`, `ScoreStdDev` | None | 음량 게이트를 통과한 캡처의 `score` 평균과 표준편차. 통과한 캡처가 없으면 생략 |
+| 필드 | 값 |
+| --- | --- |
+| `env` | `APP_ENV` |
+| `CycleFailures` | 성공 0, 실패 1(분석, 결과 발행, 요청 삭제 중 하나라도 실패). 실패한 사이클은 이 값만 남김 |
+| `Captures` | 사이클 캡처 수 |
+| `ParrotCaptures` | 앵무 소리로 판정된 캡처 수 |
+| `TooQuietCaptures` | 음량 게이트에서 걸린 캡처 수 |
+| `CallCount` | 울음 전체 수 합계 |
+| `EmergencyCycles` | 위급 캡처가 있으면 1 |
+| `CycleSeconds` | 사이클 처리 시간(초) |
+| `ScoreMean`, `ScoreStdDev` | 음량 게이트를 통과한 캡처의 `score` 평균과 표준편차. 통과한 캡처가 없으면 생략 |
 
-알람 예시(aws-infra BB-439). 임계값은 dev 배포 후 1~2주 데이터를 보고 정한다.
+Logs Insights 조회 예:
 
-| 알람 | 조건 | 잡는 문제 |
-| --- | --- | --- |
-| 사이클 실패 | `CycleFailures` 합계 1 이상 | 추론·S3·SQS 오류 |
-| 앵무 판정 0% | `Captures` > 0인데 몇 시간 동안 `ParrotCaptures` = 0 | 모델이 전부 앵무 아님으로 판정 |
-| score 고정 | `ScoreStdDev`가 0에 가까움 | 모델 출력 고장, 전처리 오류 |
-| too_quiet 비율 이탈 | `TooQuietCaptures / Captures`가 평소(약 5.6%)에서 크게 벗어남 | 마이크·녹음 환경 변화 |
-| 처리 지연 | `CycleSeconds`가 평소 대비 급증 | CPU 병목, 추론 지연 |
+```text
+fields @timestamp, env, Captures, ParrotCaptures, TooQuietCaptures, ScoreStdDev
+| filter event = "cycle_metrics"
+| stats sum(ParrotCaptures) / sum(Captures) as parrot_rate, avg(ScoreStdDev) by bin(1h)
+```
+
+- 확인할 이상: 캡처가 있는데 `parrot_rate`가 계속 0, `ScoreStdDev`가 0에 가까움, too_quiet 비율이 평소(약 5.6%)에서 크게 벗어남, `CycleSeconds` 급증
+- 이 조건을 Slack 알림으로 옮길 기준값은 운영 로그가 쌓인 뒤 정한다
 
 ## 도메인 오류
 
-- 새 오류: `CustomError`를 상속하고 `code`, `error_code`, `message`를 정의
-- `error_code` 형식: `도메인__이유`
+`app/onset/domain/exceptions.py`의 오류는 `ValueError`를 상속하고, 원인을 `detail`로 받아 메시지에 포함한다.
+
+| 오류 | 발생 조건 |
+| --- | --- |
+| `InvalidAudioSignalError` | 다차원 입력, NaN·무한대 샘플, 0 이하 샘플레이트. 입력 문제라 헬스체크의 추론 실패로 세지 않음 |
+| `InvalidOnsetCriteriaError` | `OnsetCriteria`, `EmergencyCriteria`에 유효하지 않은 값 |
 
 ## 울음 분석과 위급 판정
 
@@ -254,7 +277,7 @@ buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 �
   "call_count": 11,
   "sounds": [
     {"sound_id": "0199…", "is_parrot": true, "score": 0.93,
-     "call_count": 11, "chirp_count": 4, "window_chirp_count": 6, "is_emergency": false}
+     "call_count": 11, "chirp_count": 4, "window_chirp_count": 4, "is_emergency": false}
   ]
 }
 ```
@@ -275,7 +298,7 @@ buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 �
 | 분석이 길어짐 | 60초마다 요청 가시성을 300초로 연장 |
 | 종료(`SIGTERM`) | 새 수신 중단, 처리 중인 사이클은 최대 25초 대기. 넘기면 요청을 즉시 큐에 반환 |
 | 워커가 스스로 종료 | 프로세스를 오류로 종료. ECS가 task를 다시 띄움 |
-| 추론 연속 3회 실패 | 헬스체크 비정상. ECS 작업 정의에 헬스체크가 있으면 task 교체(BB-439) |
+| 추론 연속 3회 실패 | Slack 알림, 헬스체크 비정상. ECS 작업 정의에 헬스체크가 있으면 task 교체(BB-439) |
 
 - 중복 결과: 결과 발행 뒤 요청 삭제 전에 종료되면 같은 결과를 다시 발행. buddybird-api에서 `session_id`, `cycle`, `model_version`으로 중복 제거
 - 처리 시간: 사이클마다 `사이클 분석 완료 … elapsed=` 로그
@@ -395,7 +418,7 @@ docker exec buddybird-ai-api python -m app.health
 - Ruff 규칙: `pyproject.toml`의 `[tool.ruff.lint]`
 - mypy 설정: `pyproject.toml`의 `[tool.mypy]`
   - strict 모드
-  - 검사 대상: `app`, `core`, `tests`
+  - 검사 대상: `app`, `tests`
 - pytest 설정: `pytest.ini`
   - `DeprecationWarning` 숨김
 - GitHub Actions: `dev`와 `main` 대상 PR 또는 수동 실행 시 `lint`, `test` 실행
