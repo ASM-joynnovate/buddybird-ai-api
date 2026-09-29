@@ -110,7 +110,7 @@ class AnalyzeSessionResponse(_message.Message):
     is_emergency: _builtins.bool
     """window_chirp_count가 위급 기준 이상이면 true"""
     call_count: _builtins.int
-    """앵무 소리로 판정된 캡처의 전체 울음 수, 음역대 무관. 앵무가 아니면 0"""
+    """이 캡처의 전체 울음 수, 음역대 무관. 앵무 소리가 아니거나 분석에 실패하면 0"""
     def __init__(
         self,
         *,
