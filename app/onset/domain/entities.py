@@ -1,7 +1,4 @@
-import math
-from dataclasses import dataclass, fields
-
-from app.onset.domain.exceptions import InvalidOnsetCriteriaError
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -12,20 +9,6 @@ class OnsetCriteria:
     frame_ms: float = 10.0
     max_call_silence_ms: float = 100.0
     min_call_ms: float = 30.0
-
-    def __post_init__(self) -> None:
-        invalid = {
-            field.name: getattr(self, field.name)
-            for field in fields(self)
-            if not math.isfinite(getattr(self, field.name))
-        }
-        if self.frame_ms <= 0:
-            invalid["frame_ms"] = self.frame_ms
-        for name in ("max_call_silence_ms", "min_call_ms"):
-            if getattr(self, name) < 0:
-                invalid[name] = getattr(self, name)
-        if invalid:
-            raise InvalidOnsetCriteriaError(detail=invalid)
 
     def frame_samples(self, sample_rate: int) -> int:
         return max(1, round(sample_rate * self.frame_ms / 1000))
@@ -45,18 +28,6 @@ class Call:
     start_sample: int
     end_sample: int
     active_samples: int
-
-    @property
-    def onset_seconds(self) -> float:
-        return self.start_sample / self.sample_rate
-
-    @property
-    def offset_seconds(self) -> float:
-        return self.end_sample / self.sample_rate
-
-    @property
-    def active_seconds(self) -> float:
-        return self.active_samples / self.sample_rate
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -54,27 +53,19 @@ class _Models:
 
 
 class ParrotGate:
-    """싱글턴으로 사용한다. warm 시작 시 preload()를 호출해 cold start 지연을 없앤다."""
+    """싱글턴으로 사용한다. 워커 시작 시 preload()로 모델을 올린 뒤 predict를 호출한다."""
 
     def __init__(self, revision: str = _GATE_REVISION) -> None:
         self._revision = revision
         self._models: _Models | None = None
-        self._lock = threading.Lock()
 
     @property
     def model_version(self) -> str:
         return f"{_GATE_REPO.rsplit('/', 1)[-1]}@{self._revision}"
 
     def preload(self) -> None:
-        """워커 시작 시 모델을 미리 로드한다."""
-        self._ensure_loaded()
-
-    def _ensure_loaded(self) -> _Models:
-        if self._models is None:
-            with self._lock:
-                if self._models is None:
-                    self._models = self._load()
-        return self._models
+        """워커 시작 시 모델을 로드한다."""
+        self._models = self._load()
 
     def _load(self) -> _Models:
         import joblib
@@ -90,7 +81,9 @@ class ParrotGate:
         return _Models(bundle=bundle, session=session)
 
     def predict(self, audio: np.ndarray, sr: int) -> GateResult:
-        models = self._ensure_loaded()
+        models = self._models
+        if models is None:
+            raise RuntimeError("preload() 전에 predict를 호출함")
         emb = self._embed(models.session, audio, sr)
         bundle = models.bundle
         prob = float(bundle["pipeline"].predict_proba(emb.reshape(1, -1))[0, 1])

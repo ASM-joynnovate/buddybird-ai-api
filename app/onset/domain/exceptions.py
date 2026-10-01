@@ -3,8 +3,3 @@ class InvalidAudioSignalError(ValueError):
 
     def __init__(self, *, detail: object) -> None:
         super().__init__(f"분석할 수 없는 음성 신호입니다: {detail}")
-
-
-class InvalidOnsetCriteriaError(ValueError):
-    def __init__(self, *, detail: object) -> None:
-        super().__init__(f"onset 판정 기준 설정이 올바르지 않습니다: {detail}")

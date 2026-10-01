@@ -17,7 +17,7 @@ HTTP나 gRPC로 요청을 받지 않으며, 상태 확인은 [헬스체크](#헬
 | `app/onset/domain/services.py` | `OnsetAnalyzer`: 울음 검출 |
 | `app/onset/domain/emergency.py` | `EmergencyAnalyzer`, `EmergencyCriteria`: 울음별 음역대 판정 |
 | `app/onset/domain/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
-| `app/onset/domain/exceptions.py` | 분석 입력·설정 오류 |
+| `app/onset/domain/exceptions.py` | 분석 입력 오류 |
 | `tests/` | 분석 로직, SQS 워커, 헬스체크, 지표 테스트 |
 
 ## 준비
@@ -140,7 +140,6 @@ fields @timestamp, env, Captures, ParrotCaptures, TooQuietCaptures, ScoreStdDev
 | 오류 | 발생 조건 |
 | --- | --- |
 | `InvalidAudioSignalError` | 다차원 입력, NaN·무한대 샘플, 0 이하 샘플레이트. 입력 문제라 헬스체크의 추론 실패로 세지 않음 |
-| `InvalidOnsetCriteriaError` | `OnsetCriteria`, `EmergencyCriteria`에 유효하지 않은 값 |
 
 ## 울음 분석과 위급 판정
 

@@ -2,8 +2,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from app.onset.domain.emergency import EmergencyAnalyzer, EmergencyCriteria
-from app.onset.domain.exceptions import InvalidOnsetCriteriaError
+from app.onset.domain.emergency import EmergencyAnalyzer
 from app.onset.domain.services import OnsetAnalyzer
 
 SAMPLE_RATE = 16000
@@ -61,18 +60,3 @@ def test_empty_capture_has_no_chirps() -> None:
     judgement = emergency_analyzer.judge(analysis=analysis, samples=samples)
 
     assert judgement.chirps == ()
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"band_low_hz": 8000.0, "band_high_hz": 4600.0},
-        {"peak_search_low_hz": 5000.0},
-        {"min_consecutive_chirps": 0},
-        {"fft_size": 1},
-        {"fft_hop_samples": 0},
-    ],
-)
-def test_invalid_criteria_are_rejected(changes: dict[str, float | int]) -> None:
-    with pytest.raises(InvalidOnsetCriteriaError):
-        EmergencyCriteria(**changes)  # type: ignore[arg-type]
