@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol, TypeGuard
+from typing import Any, Protocol
 
 from app import metrics
 from app.health import HealthState
@@ -23,9 +22,10 @@ from app.onset.infra.sqs import SqsMessage
 
 logger = logging.getLogger(__name__)
 
-REQUEST_TYPE = "cycle.analyze"
 RESULT_TYPE = "cycle.analyzed"
 RECEIVE_RETRY_SECONDS = 5.0
+# 원본 본문과 합쳐 SQS 메시지 한도(256KB)를 넘지 않도록 실패 이유를 자른다.
+DEAD_LETTER_REASON_MAX_CHARS = 1000
 
 
 class Queue(Protocol):
@@ -41,9 +41,9 @@ class Queue(Protocol):
 
     async def send(self, queue_url: str, body: Mapping[str, Any]) -> None: ...
 
-
-class InvalidMessageError(ValueError):
-    pass
+    async def send_raw(
+        self, queue_url: str, body: str, attributes: Mapping[str, str]
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,55 +54,20 @@ class CycleRequest:
 
 
 def parse_request(body: str) -> CycleRequest:
-    try:
-        data = json.loads(body)
-    except (ValueError, RecursionError) as e:
-        raise InvalidMessageError(f"JSON 파싱 실패: {e!r}") from e
-    if not isinstance(data, dict):
-        raise InvalidMessageError("본문이 객체가 아님")
-    if data.get("type") != REQUEST_TYPE:
-        raise InvalidMessageError(f"지원하지 않는 type: {data.get('type')!r}")
-
-    session_id = data.get("session_id")
-    cycle = data.get("cycle")
-    sounds = data.get("sounds")
-    if not _is_text(session_id):
-        raise InvalidMessageError("session_id가 빈 값이거나 문자열이 아님")
-    # bool은 int의 하위 타입이라 따로 거른다.
-    if not isinstance(cycle, int) or isinstance(cycle, bool):
-        raise InvalidMessageError("cycle이 정수가 아님")
-    if not isinstance(sounds, list) or not sounds:
-        raise InvalidMessageError("sounds가 비어 있거나 배열이 아님")
+    """buddybird-api가 보낸 값을 그대로 믿고 읽는다. 값이 없거나 형식이 다르면 예외가 난다."""
+    data = json.loads(body)
     return CycleRequest(
-        session_id=session_id,
-        cycle=cycle,
-        sounds=tuple(_parse_sound(s) for s in sounds),
+        session_id=data["session_id"],
+        cycle=data["cycle"],
+        sounds=tuple(
+            CaptureInput(
+                capture_id=s["sound_id"],
+                s3_key=s["object_key"],
+                captured_at=datetime.fromisoformat(s["captured_at"]),
+            )
+            for s in data["sounds"]
+        ),
     )
-
-
-def _parse_sound(raw: object) -> CaptureInput:
-    if not isinstance(raw, dict):
-        raise InvalidMessageError("sounds 항목이 객체가 아님")
-    sound_id = raw.get("sound_id")
-    object_key = raw.get("object_key")
-    captured_at = raw.get("captured_at")
-    if not _is_text(sound_id) or not _is_text(object_key):
-        raise InvalidMessageError(
-            "sound_id 또는 object_key가 빈 값이거나 문자열이 아님"
-        )
-    if not isinstance(captured_at, str):
-        raise InvalidMessageError("captured_at이 문자열이 아님")
-    try:
-        at = datetime.fromisoformat(captured_at)
-    except ValueError as e:
-        raise InvalidMessageError(f"captured_at 형식 오류: {captured_at!r}") from e
-    if at.tzinfo is None:
-        raise InvalidMessageError("captured_at에 시간대가 없음")
-    return CaptureInput(capture_id=sound_id, s3_key=object_key, captured_at=at)
-
-
-def _is_text(value: object) -> TypeGuard[str]:
-    return isinstance(value, str) and bool(value)
 
 
 def build_result(
@@ -139,10 +104,9 @@ class CycleWorker:
         *,
         request_queue_url: str,
         result_queue_url: str,
+        dead_letter_queue_url: str,
         model_version: str,
         wait_seconds: int = 20,
-        heartbeat_seconds: float = 60.0,
-        visibility_timeout_seconds: int = 300,
         health: HealthState | None = None,
     ) -> None:
         self._health = health or HealthState()
@@ -150,10 +114,9 @@ class CycleWorker:
         self._analyzer = analyzer
         self._request_url = request_queue_url
         self._result_url = result_queue_url
+        self._dead_letter_url = dead_letter_queue_url
         self._model_version = model_version
         self._wait_seconds = wait_seconds
-        self._heartbeat_seconds = heartbeat_seconds
-        self._visibility_timeout = visibility_timeout_seconds
         self._stopping = asyncio.Event()
 
     def stop(self) -> None:
@@ -183,39 +146,36 @@ class CycleWorker:
         logger.info("SQS cycle worker stopped")
 
     async def handle(self, message: SqsMessage) -> bool:
-        """성공하면 결과를 발행하고 요청을 삭제한다. 실패하면 요청을 남겨 재시도와 DLQ에 맡긴다."""
-        try:
-            request = parse_request(message.body)
-        except InvalidMessageError:
-            logger.exception("잘못된 요청 메시지 %s", message.message_id)
-            return False
+        """성공하면 결과를 발행하고 요청을 삭제한다.
 
+        요청을 읽거나 분석하거나 결과를 발행하다 실패하면 재시도하지 않고 요청을 바로 DLQ로 옮긴다.
+        결과를 발행한 뒤의 요청 삭제 실패는 처리 실패로 보지 않는다.
+        """
         self._health.processing()
         started = time.monotonic()
-        heartbeat = asyncio.create_task(self._keep_invisible(message.receipt_handle))
         try:
+            request = parse_request(message.body)
             results = await self._analyzer.analyze(request.sounds)
             await self._queue.send(
                 self._result_url,
                 build_result(request, results, self._model_version),
             )
-            await self._queue.delete(self._request_url, message.receipt_handle)
         except asyncio.CancelledError:
             # 종료로 중단된 요청은 가시성 만료를 기다리지 않고 바로 큐에 돌려놓는다.
             await self._release(message.receipt_handle)
             raise
-        except Exception:
-            logger.exception(
-                "사이클 분석 실패 session=%s cycle=%d",
-                request.session_id,
-                request.cycle,
-            )
+        except Exception as e:
+            logger.exception("요청 %s 처리 실패", message.message_id)
             metrics.emit(metrics.failure_metrics())
+            await self._dead_letter(message, repr(e))
             return False
-        finally:
-            heartbeat.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await heartbeat
+
+        try:
+            await self._queue.delete(self._request_url, message.receipt_handle)
+        except Exception:
+            # 결과는 이미 발행됐다. 요청이 다시 보이면 같은 결과를 한 번 더 발행하고,
+            # buddybird-api가 session_id, cycle, model_version으로 중복을 거른다.
+            logger.exception("요청 %s 삭제 실패", message.message_id)
 
         elapsed = time.monotonic() - started
         logger.info(
@@ -228,18 +188,23 @@ class CycleWorker:
         metrics.emit(metrics.cycle_metrics(results, elapsed))
         return True
 
+    async def _dead_letter(self, message: SqsMessage, reason: str) -> None:
+        # DLQ 전송이 실패하면 요청을 남겨 SQS 재수신과 redrive policy에 맡긴다.
+        try:
+            await self._queue.send_raw(
+                self._dead_letter_url,
+                message.body,
+                {"error": reason[:DEAD_LETTER_REASON_MAX_CHARS]},
+            )
+            await self._queue.delete(self._request_url, message.receipt_handle)
+        except asyncio.CancelledError:
+            await self._release(message.receipt_handle)
+            raise
+        except Exception:
+            logger.exception("요청 %s DLQ 이동 실패", message.message_id)
+
     async def _release(self, receipt_handle: str) -> None:
         try:
             await self._queue.change_visibility(self._request_url, receipt_handle, 0)
         except Exception:
             logger.exception("요청 반환 실패")
-
-    async def _keep_invisible(self, receipt_handle: str) -> None:
-        while True:
-            await asyncio.sleep(self._heartbeat_seconds)
-            try:
-                await self._queue.change_visibility(
-                    self._request_url, receipt_handle, self._visibility_timeout
-                )
-            except Exception:
-                logger.exception("가시성 연장 실패")

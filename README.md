@@ -39,7 +39,7 @@ CI와 같은 잠금 버전으로 설치하려면 `uv sync --locked`를 사용한
 ## 실행
 
 워커를 실행한다. 모델 다운로드·로딩이 끝나면 요청 큐 조회를 시작한다.
-요청 큐와 결과 큐 URL은 필수이며, 없거나 비어 있으면 모델을 불러오기 전에 오류로 종료한다. 큐 연결 방법은 [로컬 실행](#로컬-실행)을 따른다.
+요청 큐, 요청 DLQ, 결과 큐 URL은 필수이며, 없거나 비어 있으면 모델을 불러오기 전에 오류로 종료한다. 큐 연결 방법은 [로컬 실행](#로컬-실행)을 따른다.
 캡처 분석에는 `AUDIO_S3_BUCKET`과 해당 객체를 읽을 수 있는 AWS 인증이 필요하다.
 
 ```sh
@@ -102,7 +102,7 @@ ECS 작업 정의에 권장하는 설정(aws-infra BB-439):
 | `ai-api 추론 연속 실패` | 추론 연속 실패가 3회에 도달. 헬스체크 비정상 기준과 같음 | 전체 |
 | `ai-api 추론 복구` | 연속 3회 이상 실패한 뒤 추론이 다시 성공 | 전체 |
 
-- 5회 재시도 후 DLQ로 간 사이클은 aws-infra의 DLQ 알람(이메일)이 알린다
+- 처리에 실패해 DLQ로 간 사이클은 aws-infra의 DLQ 알람(이메일)이 알린다
 - 운영에서는 웹훅 주소를 SSM Parameter Store 보안 문자열에 두고 ECS 작업 정의의 `secrets`로 전달한다(aws-infra BB-439)
 
 ## 지표
@@ -113,7 +113,7 @@ ECS 작업 정의에 권장하는 설정(aws-infra BB-439):
 | 필드 | 값 |
 | --- | --- |
 | `env` | `APP_ENV` |
-| `CycleFailures` | 성공 0, 실패 1(분석, 결과 발행, 요청 삭제 중 하나라도 실패). 실패한 사이클은 이 값만 남김 |
+| `CycleFailures` | 성공 0, 실패 1(요청 읽기, 분석, 결과 발행 중 하나라도 실패). 실패한 사이클은 이 값만 남김. 결과 발행 뒤 요청 삭제 실패는 성공으로 셈 |
 | `Captures` | 사이클 캡처 수 |
 | `ParrotCaptures` | 앵무 소리로 판정된 캡처 수 |
 | `TooQuietCaptures` | 음량 게이트에서 걸린 캡처 수 |
@@ -211,7 +211,7 @@ S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate)
 
 위급 판정과 별개로, 앵무 소리로 판정된 캡처는 음역대와 관계없이 울음 검출이 찾은 울음 전체 수를 `call_count`로 남긴다.
 앵무가 아니거나 음량 게이트에서 걸린 캡처의 `call_count`는 0이다.
-분석에 실패한 캡처가 하나라도 있으면 워커는 사이클 결과를 발행하지 않고 요청을 다시 처리한다([처리 규칙](#처리-규칙)).
+분석에 실패한 캡처가 하나라도 있으면 워커는 사이클 결과를 발행하지 않고 요청을 DLQ로 옮긴다([처리 규칙](#처리-규칙)).
 
 저장소 루트에서 다음 예제로 도메인 분석기 두 결과를 확인할 수 있다.
 
@@ -242,6 +242,7 @@ buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 �
 | 환경 변수 | 값 |
 | --- | --- |
 | `SQS_PARROT_SOUND_DETECTION_QUEUE_URL` | 요청 큐 URL. 필수 |
+| `SQS_PARROT_SOUND_DETECTION_DLQ_URL` | 요청 큐의 DLQ URL. 처리에 실패한 요청을 바로 옮김. 필수 |
 | `SQS_JUDGMENT_RESULT_QUEUE_URL` | 결과 큐 URL. 필수 |
 | `SQS_ENDPOINT_URL` | 로컬 elasticmq 주소. 운영에서는 비움 |
 | `AUDIO_S3_BUCKET` | 캡처 오디오 버킷 |
@@ -259,10 +260,11 @@ buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 �
 }
 ```
 
-- `sounds`: 사이클의 캡처 전체, 1개 이상. 순서 무관
+- `sounds`: 사이클의 캡처 전체. 순서 무관. 빈 배열이면 `sounds: []`, `call_count: 0`, `is_emergency: false` 결과를 발행
 - `sound_id`: `session_sounds.id`
 - `object_key`: `files.file_path`. 데이터 버킷의 `user/{user_id}/session/{session_id}/sound/{file_id}`
-- `captured_at`: ISO 8601, 시간대 필수
+- `captured_at`: ISO 8601, 시간대 포함
+- 워커는 buddybird-api가 보낸 값을 검증하지 않고 그대로 읽는다. `type`도 확인하지 않는다. 필드가 없거나 읽을 수 없으면 처리 실패로 본다
 
 ### 결과 메시지
 
@@ -293,9 +295,10 @@ buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 �
 | 상황 | 동작 |
 | --- | --- |
 | 분석 성공 | 결과 발행 후 요청 삭제 |
-| 캡처 하나라도 실패 | 결과 미발행, 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름 |
-| 형식이 잘못된 요청 | 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름. 빈 값, `null`, 타입이 다른 필드, 시간대 없는 `captured_at` 포함 |
-| 분석이 길어짐 | 60초마다 요청 가시성을 300초로 연장 |
+| 처리 실패(요청을 읽지 못함, 캡처 하나라도 분석 실패, 결과 발행 실패) | 결과 미발행. 재시도 없이 요청 본문을 DLQ로 옮기고 요청 삭제. 실패 이유는 메시지 속성 `error`에 남김(최대 1000자) |
+| 결과 발행 뒤 요청 삭제 실패 | 성공으로 처리. 요청이 다시 보이면 같은 결과를 한 번 더 발행 |
+| DLQ 전송 실패 | 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름 |
+| 처리가 가시성 시간(300초)을 넘김 | 연장하지 않음. 요청이 큐에 다시 보임. 현재 사이클 처리는 2~16초 |
 | 종료(`SIGTERM`) | 새 수신 중단, 처리 중인 사이클은 최대 25초 대기. 넘기면 요청을 즉시 큐에 반환 |
 | 워커가 스스로 종료 | 프로세스를 오류로 종료. ECS가 task를 다시 띄움 |
 | 추론 연속 3회 실패 | Slack 알림, 헬스체크 비정상. ECS 작업 정의에 헬스체크가 있으면 task 교체(BB-439) |
@@ -309,7 +312,7 @@ buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 �
 
 실제 dev SQS와 데이터 버킷을 사용한다. Docker가 필요 없고 dev 버킷 읽기 권한이 있는 AWS 인증(`aws sso login`)이 필요하다.
 
-1. `.env.example`을 `.env.dev`로 복사하고 dev 리전, 버킷, 두 큐 URL을 채운다. 값은 aws-infra 출력이나 AWS 콘솔에서 확인한다.
+1. `.env.example`을 `.env.dev`로 복사하고 dev 리전, 버킷, 세 큐 URL(요청, 요청 DLQ, 결과)을 채운다. 값은 aws-infra 출력이나 AWS 콘솔에서 확인한다.
 2. 워커를 실행한다.
 
 ```sh
@@ -337,11 +340,13 @@ aws sqs receive-message --queue-url "$SQS_JUDGMENT_RESULT_QUEUE_URL" --wait-time
 docker run --rm -p 9324:9324 softwaremill/elasticmq-native
 aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name request
 aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name result
+aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name request-dlq
 
 AWS_DEFAULT_REGION=ap-northeast-2 \
 SQS_ENDPOINT_URL=http://localhost:9324 \
 SQS_PARROT_SOUND_DETECTION_QUEUE_URL=http://localhost:9324/000000000000/request \
 SQS_JUDGMENT_RESULT_QUEUE_URL=http://localhost:9324/000000000000/result \
+SQS_PARROT_SOUND_DETECTION_DLQ_URL=http://localhost:9324/000000000000/request-dlq \
 AUDIO_S3_BUCKET='실제-dev-데이터-버킷명' \
 make local
 ```

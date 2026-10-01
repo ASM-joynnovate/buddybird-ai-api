@@ -9,17 +9,14 @@ import pytest
 
 from app.health import HealthState
 from app.onset.application.cycle_analyzer import CaptureInput, CycleAnalyzer
-from app.onset.application.cycle_worker import (
-    CycleWorker,
-    InvalidMessageError,
-    parse_request,
-)
+from app.onset.application.cycle_worker import CycleWorker
 from app.onset.infra.parrot_gate import GateResult
 from app.onset.infra.sqs import SqsMessage
 
 SAMPLE_RATE = 16000
 REQUEST_URL = "http://sqs/request"
 RESULT_URL = "http://sqs/result"
+DLQ_URL = "http://sqs/request-dlq"
 MODEL_VERSION = "parrot-sound-gate@test"
 T0 = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
 
@@ -57,7 +54,10 @@ class FakeQueue:
         self.on_receive: Callable[[], None] | None = None
         self.sent: list[Mapping[str, Any]] = []
         self.deleted: list[str] = []
-        self.extended: list[str] = []
+        self.dead_lettered: list[tuple[str, Mapping[str, str]]] = []
+        self.fail_dead_letter = False
+        self.fail_send = False
+        self.fail_delete = False
         self.released: list[str] = []
 
     async def receive(self, queue_url: str, *, wait_seconds: int) -> list[SqsMessage]:
@@ -67,19 +67,29 @@ class FakeQueue:
         return self.inbox.pop(0) if self.inbox else []
 
     async def delete(self, queue_url: str, receipt_handle: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("delete down")
         self.deleted.append(receipt_handle)
 
     async def change_visibility(
         self, queue_url: str, receipt_handle: str, timeout_seconds: int
     ) -> None:
-        if timeout_seconds == 0:
-            self.released.append(receipt_handle)
-        else:
-            self.extended.append(receipt_handle)
+        assert timeout_seconds == 0
+        self.released.append(receipt_handle)
 
     async def send(self, queue_url: str, body: Mapping[str, Any]) -> None:
         assert queue_url == RESULT_URL
+        if self.fail_send:
+            raise RuntimeError("send down")
         self.sent.append(body)
+
+    async def send_raw(
+        self, queue_url: str, body: str, attributes: Mapping[str, str]
+    ) -> None:
+        assert queue_url == DLQ_URL
+        if self.fail_dead_letter:
+            raise RuntimeError("dlq down")
+        self.dead_lettered.append((body, attributes))
 
 
 CLIPS = {
@@ -107,16 +117,14 @@ def message(
     return SqsMessage(message_id="m-1", receipt_handle="r-1", body=json.dumps(body))
 
 
-def worker(
-    queue: FakeQueue, loader: FakeLoader, heartbeat_seconds: float = 60.0
-) -> CycleWorker:
+def worker(queue: FakeQueue, loader: FakeLoader) -> CycleWorker:
     return CycleWorker(
         queue,
         CycleAnalyzer(FakeGate(), load_audio=loader),
         request_queue_url=REQUEST_URL,
         result_queue_url=RESULT_URL,
+        dead_letter_queue_url=DLQ_URL,
         model_version=MODEL_VERSION,
-        heartbeat_seconds=heartbeat_seconds,
     )
 
 
@@ -227,6 +235,7 @@ async def test_worker_records_idle_and_processing_phases() -> None:
         CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS), health=health),
         request_queue_url=REQUEST_URL,
         result_queue_url=RESULT_URL,
+        dead_letter_queue_url=DLQ_URL,
         model_version=MODEL_VERSION,
         health=health,
     )
@@ -285,80 +294,95 @@ async def test_too_quiet_capture_skips_gate() -> None:
     ]
 
 
-async def test_failed_capture_keeps_request_for_retry() -> None:
+async def test_failed_capture_moves_request_to_dead_letter_queue() -> None:
     queue = FakeQueue()
     msg = message([("s1", "k/four-a", T0), ("s2", "k/missing", T0)])
 
     assert not await worker(queue, FakeLoader(CLIPS)).handle(msg)
 
     assert queue.sent == []
-    assert queue.deleted == []
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"type": "sound.classify"},
-        {"sounds": []},
-        {"cycle": "three"},
-        {
-            "sounds": [
-                {
-                    "sound_id": "s1",
-                    "object_key": "k",
-                    "captured_at": "2026-09-23T10:00:00",
-                }
-            ]
-        },
-        {"sounds": [{"sound_id": "s1", "captured_at": "2026-09-23T10:00:00Z"}]},
-        {"session_id": None},
-        {"session_id": 123},
-        {"cycle": True},
-        {"cycle": 3.9},
-        {"sounds": ["s1"]},
-        {"sounds": [{"sound_id": None, "object_key": "k", "captured_at": "x"}]},
-        {"sounds": [{"sound_id": "s1", "object_key": "k", "captured_at": 1}]},
-    ],
-)
-def test_rejects_malformed_request(overrides: dict[str, Any]) -> None:
-    msg = message([("s1", "k", T0)], overrides)
-
-    with pytest.raises(InvalidMessageError):
-        parse_request(msg.body)
+    assert [body for body, _ in queue.dead_lettered] == [msg.body]
+    assert "k/missing" in queue.dead_lettered[0][1]["error"]
+    assert queue.deleted == ["r-1"]
 
 
 @pytest.mark.parametrize(
     "body",
     [
-        '{"type": "cycle.analyze", "session_id": "s", "cycle": 1e999, "sounds": []}',
-        "[" * 100_000,
-        "[]",
-        "null",
+        "not json",
+        json.dumps({"session_id": "s", "cycle": 1}),
+        json.dumps(
+            {
+                "session_id": "s",
+                "cycle": 1,
+                "sounds": [{"sound_id": "s1", "object_key": "k", "captured_at": "x"}],
+            }
+        ),
     ],
 )
-def test_rejects_unparsable_body_without_escaping(body: str) -> None:
-    with pytest.raises(InvalidMessageError):
-        parse_request(body)
-
-
-async def test_malformed_request_is_not_deleted() -> None:
+async def test_unreadable_request_moves_to_dead_letter_queue(body: str) -> None:
     queue = FakeQueue()
-    msg = SqsMessage(message_id="m-1", receipt_handle="r-1", body="not json")
+    msg = SqsMessage(message_id="m-1", receipt_handle="r-1", body=body)
 
     assert not await worker(queue, FakeLoader(CLIPS)).handle(msg)
 
     assert queue.sent == []
-    assert queue.deleted == []
+    assert [b for b, _ in queue.dead_lettered] == [body]
+    assert queue.deleted == ["r-1"]
 
 
-async def test_extends_visibility_while_analysis_runs() -> None:
+async def test_result_send_failure_moves_request_to_dead_letter_queue() -> None:
     queue = FakeQueue()
+    queue.fail_send = True
     msg = message([("s1", "k/four-a", T0)])
 
-    assert await worker(queue, FakeLoader(CLIPS, delay=0.05), 0.01).handle(msg)
+    assert not await worker(queue, FakeLoader(CLIPS)).handle(msg)
 
-    assert queue.extended
-    assert set(queue.extended) == {"r-1"}
+    assert "send down" in queue.dead_lettered[0][1]["error"]
+    assert queue.deleted == ["r-1"]
+
+
+async def test_delete_failure_after_publishing_is_success() -> None:
+    queue = FakeQueue()
+    queue.fail_delete = True
+    msg = message([("s1", "k/four-a", T0)])
+
+    assert await worker(queue, FakeLoader(CLIPS)).handle(msg)
+
+    assert len(queue.sent) == 1
+    assert queue.dead_lettered == []
+
+
+async def test_dead_letter_reason_is_truncated() -> None:
+    queue = FakeQueue()
+    msg = message([("s1", "k/" + "x" * 5000, T0)])
+
+    assert not await worker(queue, FakeLoader(CLIPS)).handle(msg)
+
+    assert len(queue.dead_lettered[0][1]["error"]) == 1000
+
+
+async def test_empty_sounds_publishes_empty_result() -> None:
+    queue = FakeQueue()
+    msg = message([])
+
+    assert await worker(queue, FakeLoader(CLIPS)).handle(msg)
+
+    result = queue.sent[0]
+    assert result["sounds"] == []
+    assert result["call_count"] == 0
+    assert result["is_emergency"] is False
+    assert queue.deleted == ["r-1"]
+
+
+async def test_request_is_kept_when_dead_letter_send_fails() -> None:
+    queue = FakeQueue()
+    queue.fail_dead_letter = True
+    msg = message([("s1", "k/missing", T0)])
+
+    assert not await worker(queue, FakeLoader(CLIPS)).handle(msg)
+
+    assert queue.deleted == []
 
 
 async def test_cancelled_analysis_returns_request_to_queue() -> None:
@@ -401,6 +425,7 @@ async def test_unexpected_handler_error_does_not_stop_worker() -> None:
         CycleAnalyzer(FakeGate(), load_audio=FakeLoader(CLIPS)),
         request_queue_url=REQUEST_URL,
         result_queue_url=RESULT_URL,
+        dead_letter_queue_url=DLQ_URL,
         model_version=MODEL_VERSION,
     )
     receives = 0

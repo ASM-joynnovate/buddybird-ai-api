@@ -29,11 +29,13 @@ def create_worker(
 ) -> CycleWorker:
     request_queue_url = required_env("SQS_PARROT_SOUND_DETECTION_QUEUE_URL")
     result_queue_url = required_env("SQS_JUDGMENT_RESULT_QUEUE_URL")
+    dead_letter_queue_url = required_env("SQS_PARROT_SOUND_DETECTION_DLQ_URL")
     return CycleWorker(
         SqsClient(endpoint_url=os.getenv("SQS_ENDPOINT_URL") or None),
         analyzer,
         request_queue_url=request_queue_url,
         result_queue_url=result_queue_url,
+        dead_letter_queue_url=dead_letter_queue_url,
         model_version=model_version,
         health=health,
     )

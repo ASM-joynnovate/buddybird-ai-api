@@ -99,7 +99,7 @@ class CycleAnalyzer:
     async def analyze(self, captures: Sequence[CaptureInput]) -> list[CaptureResult]:
         """captured_at 순으로 정렬한 결과를 돌려준다.
 
-        캡처 하나라도 실패하면 ExceptionGroup을 올린다. 워커는 사이클 전체를 재시도한다.
+        캡처 하나라도 실패하면 ExceptionGroup을 올린다. 워커는 사이클 요청을 DLQ로 옮긴다.
         """
         semaphore = asyncio.Semaphore(self._max_concurrency)
 
