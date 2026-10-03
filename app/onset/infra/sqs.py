@@ -61,3 +61,16 @@ class SqsClient:
             QueueUrl=queue_url,
             MessageBody=json.dumps(body, ensure_ascii=False),
         )
+
+    async def send_raw(
+        self, queue_url: str, body: str, attributes: Mapping[str, str]
+    ) -> None:
+        await asyncio.to_thread(
+            self._client.send_message,
+            QueueUrl=queue_url,
+            MessageBody=body,
+            MessageAttributes={
+                name: {"DataType": "String", "StringValue": value}
+                for name, value in attributes.items()
+            },
+        )

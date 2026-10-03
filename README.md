@@ -1,24 +1,24 @@
 # buddybird-ai-api
 
-Python 3.12 기반 앵무 울음 분석 프로젝트다. gRPC 서버와 캡처 단위의 울음·음역대 분석 로직을 포함한다.
-서버는 gRPC 표준 헬스체크 `grpc.health.v1.Health`와 분석 RPC `OnsetService.AnalyzeSession`을 제공한다.
-SQS 요청 큐를 설정하면 사이클 분석 워커도 같은 프로세스에서 실행하며, gRPC와 판정 모델·분석 로직을 공유한다.
+Python 3.12 기반 앵무 울음 분석 워커다. buddybird-api가 SQS 요청 큐에 넣은 세션 사이클을 분석해 결과 큐로 발행한다.
+HTTP나 gRPC로 요청을 받지 않으며, 상태 확인은 [헬스체크](#헬스체크) 명령으로 한다.
 
 ## 코드 구조
 
 | 경로 | 역할 |
 | --- | --- |
-| `app/main.py` | 모델 로딩, gRPC 서버·SQS 워커 실행과 종료 처리 |
-| `app/onset/application/` | 사이클 분석, gRPC 서비스, SQS 워커 |
+| `app/main.py` | 모델 로딩, SQS 워커 실행과 종료 처리 |
+| `app/health.py` | 워커 헬스 상태 기록과 컨테이너 헬스체크 명령 |
+| `app/alert.py` | 운영 알림을 Slack 수신 웹훅으로 전송 |
+| `app/metrics.py` | 사이클 분석 지표를 구조화 로그로 기록 |
+| `app/onset/application/` | 사이클 분석, SQS 워커 |
 | `app/onset/infra/` | 앵무 소리 판정 모델, S3 오디오 로더, SQS 클라이언트 |
 | `app/onset/domain/entities.py` | 울음·분석 결과와 `OnsetCriteria` |
 | `app/onset/domain/services.py` | `OnsetAnalyzer`: 울음 검출 |
 | `app/onset/domain/emergency.py` | `EmergencyAnalyzer`, `EmergencyCriteria`: 울음별 음역대 판정 |
-| `app/onset/domain/exceptions.py` | 분석 입력·설정 오류 |
-| `core/grpc/` | 포트 설정, 헬스체크 CLI, 오류 인터셉터 |
-| `proto/buddybird/ai/v1/onset.proto` | 분석 RPC 계약 |
-| `buddybird/ai/v1/` | proto에서 생성한 Python 코드와 타입 스텁 |
-| `tests/` | 분석 로직, RPC 계약, 서버 테스트 |
+| `app/onset/domain/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
+| `app/onset/domain/exceptions.py` | 분석 입력 오류 |
+| `tests/` | 분석 로직, SQS 워커, 헬스체크, 지표 테스트 |
 
 ## 준비
 
@@ -38,92 +38,140 @@ CI와 같은 잠금 버전으로 설치하려면 `uv sync --locked`를 사용한
 
 ## 실행
 
-개발 서버를 실행한다. 포트 기본값은 50051이다. 모델 다운로드·로딩이 완료된 뒤 포트를 열고 `SERVING` 상태가 된다.
+워커를 실행한다. 모델 다운로드·로딩이 끝나면 요청 큐 조회를 시작한다.
+요청 큐, 요청 DLQ, 결과 큐 URL은 필수이며, 없거나 비어 있으면 모델을 불러오기 전에 오류로 종료한다. 큐 연결 방법은 [로컬 실행](#로컬-실행)을 따른다.
 캡처 분석에는 `AUDIO_S3_BUCKET`과 해당 객체를 읽을 수 있는 AWS 인증이 필요하다.
 
 ```sh
-make local
-make local port=50052
+make local ENV_FILE=.env.dev
 ```
-
-별도 터미널에서 헬스체크를 호출한다. 서버와 같은 포트를 지정한다.
-
-```sh
-make health
-make health port=50052
-```
-
-서버가 요청을 받을 수 있으면 `SERVING`을 출력한다.
 
 | 항목 | 값 |
 | --- | --- |
-| 헬스체크 서비스 | `grpc.health.v1.Health` |
-| 전체 상태 서비스 이름 | 빈 문자열 |
-| 포트 환경 변수 | `GRPC_PORT`, 기본값 50051 |
-| 바인딩 주소 | `0.0.0.0`, TLS 없는 gRPC |
 | 로그 수준 환경 변수 | `LOG_LEVEL`, 기본값 `INFO` |
+| 헬스 상태 파일 환경 변수 | `HEALTH_FILE`, 기본값 임시 디렉터리의 `buddybird-ai-api-health.json` |
+| 실행 환경 변수 | `APP_ENV`(`dev`, `prod`). 지표 로그와 알림에 표시. 기본값 `local` |
+| 알림 웹훅 환경 변수 | `ALERT_SLACK_WEBHOOK_URL`. 비우면 알림 없이 로그만 남김 |
 
-- 헬스체크 검사 범위: 서버 응답만 확인, 분석 준비 상태와 외부 서비스 연결 상태는 미검사
-- 서버 종료: `Ctrl+C`
-  - `SIGINT`, `SIGTERM` 수신 시 헬스체크 상태 `NOT_SERVING`으로 변경
-  - gRPC 요청은 최대 10초, SQS 워커는 최대 25초를 병렬로 기다린 뒤 종료
+- 종료: `Ctrl+C`. `SIGINT`, `SIGTERM`을 받으면 새 수신을 멈추고 처리 중인 사이클을 최대 25초 기다린다
+- 워커가 스스로 끝나면 프로세스를 오류로 종료한다. ECS가 task를 다시 띄운다
 
-### 헬스체크 명령
+## 헬스체크
 
-로컬 가상환경에서는 다음 명령을 사용한다. 컨테이너 내부에서는 `uv run`을 생략한다.
-Dockerfile에 `HEALTHCHECK`는 없으므로 자동 검사는 실행 환경에서 별도로 설정한다.
+워커는 상태가 바뀔 때마다 `HealthState`를 헬스 상태 파일에 기록한다.
+`python -m app.health`가 파일을 읽어 판정하고, 정상이면 종료 코드 0, 비정상이면 1과 이유를 출력한다.
 
 ```sh
-uv run python -m core.grpc.healthcheck --target 127.0.0.1:50051
+uv run python -m app.health
 ```
 
-| 옵션 | 기본값 |
+| 비정상 조건 | 기준 |
 | --- | --- |
-| `--target` | `127.0.0.1:<GRPC_PORT>` |
-| `--service` | 빈 문자열 |
-| `--timeout` | 3초 |
+| 모델 준비 전 | 모델 로딩이 끝나기 전 |
+| SQS 조회 정체 | 대기 상태로 90초 초과. long polling 20초와 수신 실패 재시도 5초에 여유를 둔 값 |
+| 사이클 처리 정체 | 처리 상태로 10분 초과. 현재 추정 최대 사이클 처리 시간(약 16초)에 여유를 둔 값 |
+| 추론 연속 실패 | 앵무 소리 판정·울음 검출 단계 연속 3회 실패 |
+| 상태 파일 없음·손상 | 파일을 읽거나 해석할 수 없음 |
 
-- 종료 코드 0: `SERVING`
-- 종료 코드 1: 연결 실패, 제한 시간 초과, `SERVING` 외 상태
+- 대기 상태: SQS 조회 직전에 기록. 처리 상태: 사이클 분석을 시작할 때 기록
+- 추론 실패에서 제외: S3 다운로드 실패, 음량 게이트에서 걸린 캡처, 입력 오디오 오류(`InvalidAudioSignalError`). 재시작으로 풀리지 않는 문제라 알람으로 확인한다
+- 추론이 한 번 성공하면 연속 실패 수를 0으로 초기화한다
+- 시간은 `time.monotonic()`으로 잰다. 같은 호스트의 프로세스끼리 공유되는 시계라 워커와 확인 명령이 같은 기준을 쓴다
+- 기준값은 dev 배포 후 `elapsed=` 로그를 보고 조정한다
 
-## 오류 응답
+ECS 작업 정의에 권장하는 설정(aws-infra BB-439):
 
-`ErrorInterceptor`가 `CustomError`와 처리하지 않은 예외를 gRPC 상태로 변환한다.
+| 설정 | 값 |
+| --- | --- |
+| command | `["CMD", "python", "-m", "app.health"]` |
+| interval | 15초 |
+| timeout | 5초 |
+| retries | 3 |
+| startPeriod | 120초. 모델 로딩 실측 후 조정 |
 
-- 상태 메시지: 예외의 `message`
-- 상세 정보: `google.rpc.ErrorInfo` 1개
-  - `reason`: 예외의 `error_code`
-  - `domain`: `buddybird-ai-api`
-- 예외의 `detail`: 응답에 미포함
+## 알림
 
-| 상황 | gRPC 상태 | `reason` |
+`ALERT_SLACK_WEBHOOK_URL`이 있으면 아래 상황에서 Slack으로 알림을 보낸다. 모든 알림에 `APP_ENV`와 호스트 이름이 들어간다.
+전송은 스레드에서 하고, 실패해도 로그만 남기고 워커는 계속 동작한다.
+
+| 알림 | 조건 | 환경 |
 | --- | --- | --- |
-| `CustomError` code 400, 422 | `INVALID_ARGUMENT` | 예외에 지정한 값 |
-| `CustomError` code 404 | `NOT_FOUND` | 예외에 지정한 값 |
-| `CustomError` code 500 | `INTERNAL` | 예외에 지정한 값 |
-| `CustomError` 그 외 code | - 500 이상: `INTERNAL`<br>- 500 미만: `INVALID_ARGUMENT` | 예외에 지정한 값 |
-| 처리하지 않은 예외 | `INTERNAL` | `COMMON__INTERNAL_SERVER_ERROR` |
+| `ai-api 시작` | 모델 로딩이 끝나 워커가 시작됨. 모델 버전 포함 | `prod`만 |
+| `ai-api 시작 실패` | 모델 로딩 전 오류로 종료(모델 파일, 필수 환경 변수 등) | 전체 |
+| `ai-api 비정상 종료` | 모델 로딩 후 예외로 종료(워커가 스스로 끝난 경우 포함) | 전체 |
+| `ai-api 추론 연속 실패` | 추론 연속 실패가 3회에 도달. 헬스체크 비정상 기준과 같음 | 전체 |
+| `ai-api 추론 복구` | 연속 3회 이상 실패한 뒤 추론이 다시 성공 | 전체 |
 
-처리하지 않은 예외는 서버 로그에 예외 내용을 기록한다.
-응답 메시지는 `서버 내부 오류가 발생했습니다. 관리자에게 문의해주세요.`로 고정한다.
+- 처리에 실패해 DLQ로 간 사이클은 aws-infra의 DLQ 알람(이메일)이 알린다
+- 운영에서는 웹훅 주소를 SSM Parameter Store 보안 문자열에 두고 ECS 작업 정의의 `secrets`로 전달한다(aws-infra BB-439)
 
-클라이언트는 `ErrorInfo`를 아래 방식으로 읽는다.
+## 지표
 
-```python
-from google.rpc import error_details_pb2
-from grpc_status import rpc_status
+사이클마다 지표를 JSON 한 줄(`"event": "cycle_metrics"`)로 표준 출력에 남긴다. CloudWatch 사용자 지정 지표를 만들지 않아 추가 비용이 없고,
+예외 없이 틀린 값을 내는 모델 이상(앵무 판정 0%, score 고정)을 CloudWatch Logs Insights로 조회해 확인한다.
 
-status = rpc_status.from_call(error)
-info = error_details_pb2.ErrorInfo()
-status.details[0].Unpack(info)
+| 필드 | 값 |
+| --- | --- |
+| `env` | `APP_ENV` |
+| `CycleFailures` | 성공 0, 실패 1(요청 읽기, 분석, 결과 발행 중 하나라도 실패). 실패한 사이클은 이 값만 남김. 결과 발행 뒤 요청 삭제 실패는 성공으로 셈 |
+| `Captures` | 사이클 캡처 수 |
+| `ParrotCaptures` | 앵무 소리로 판정된 캡처 수 |
+| `TooQuietCaptures` | 음량 게이트에서 걸린 캡처 수 |
+| `CallCount` | 울음 전체 수 합계 |
+| `EmergencyCycles` | 위급 캡처가 있으면 1 |
+| `CycleSeconds` | 사이클 처리 시간(초) |
+| `ScoreMean`, `ScoreStdDev` | 음량 게이트를 통과한 캡처의 `score` 평균과 표준편차. 통과한 캡처가 없으면 생략 |
+
+Logs Insights 조회 예:
+
+```text
+fields @timestamp, env, Captures, ParrotCaptures, TooQuietCaptures, ScoreStdDev
+| filter event = "cycle_metrics"
+| stats sum(ParrotCaptures) / sum(Captures) as parrot_rate, avg(ScoreStdDev) by bin(1h)
 ```
 
-- 새 에러: `CustomError` 상속 후 `code`, `error_code`, `message` 정의
-- `error_code` 형식: `도메인__이유`
+- 확인할 이상: 캡처가 있는데 `parrot_rate`가 계속 0, `ScoreStdDev`가 0에 가까움, too_quiet 비율이 평소(약 5.6%)에서 크게 벗어남, `CycleSeconds` 급증
+- 이 조건을 Slack 알림으로 옮길 기준값은 운영 로그가 쌓인 뒤 정한다
+
+## 도메인 오류
+
+`app/onset/domain/exceptions.py`의 오류는 `ValueError`를 상속하고, 원인을 `detail`로 받아 메시지에 포함한다.
+
+| 오류 | 발생 조건 |
+| --- | --- |
+| `InvalidAudioSignalError` | 다차원 입력, NaN·무한대 샘플, 0 이하 샘플레이트. 입력 문제라 헬스체크의 추론 실패로 세지 않음 |
 
 ## 울음 분석과 위급 판정
 
-두 도메인 분석기는 캡처 하나를 대상으로 한다. gRPC와 SQS 워커는 `CycleAnalyzer`를 통해 앵무 소리로 판정된 캡처에 이 분석기를 적용한다.
+`CycleAnalyzer`는 캡처마다 다음 순서로 분석한다.
+
+```text
+S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate) → 울음 검출 → 울음별 음역대 판정
+```
+
+- 음량 게이트에서 걸리면 이후 단계를 건너뛰고 앵무가 아닌 캡처로 처리한다.
+- 울음 검출과 음역대 판정은 앵무 소리로 판정된 캡처에만 한다.
+
+| 용어 | 뜻 | 결과 필드 |
+| --- | --- | --- |
+| 울음(call) | 울음 검출이 찾은 소리 구간 하나, 음역대 무관 | `call_count` |
+| 짹(chirp) | 울음 중 대표 음높이가 위급 음역대 안인 것 | `chirp_count` |
+
+짹은 울음의 일부이므로 `chirp_count`는 항상 `call_count` 이하다.
+두 도메인 분석기(울음 검출, 울음별 음역대 판정)는 캡처 하나를 대상으로 한다.
+
+### 음량 게이트
+
+`maxwin_db`는 100 ms 창을 100 ms 간격으로 옮기며 구한 RMS의 최댓값을 dBFS로 돌려준다.
+긴 무음 속 짧은 울음이 평균에 희석되지 않도록 전체 RMS 대신 최대 창을 쓴다. 창보다 짧은 캡처는 전체를 한 창으로 본다.
+
+| 기준 | 값 |
+| --- | --- |
+| 창 길이·간격 | 100 ms |
+| `too_quiet` | `maxwin_db` < −39 dBFS, −39.0은 통과 |
+
+- 기준 출처: parrot-mimicry `docs/step1-loudness-gate/spec-step1-loudness-gate.md`, 계산은 `scripts/step2/classify_folder.py`의 `maxwin_db()`와 같다.
+- `too_quiet` 캡처 결과: `is_parrot=false`, `score=0.0`, `call_count=0`, `chirp_count=0`. 결과 형식에 별도 필드는 없고, 캡처마다 `capture <id> maxwin_db=<값> too_quiet=<판정>`을 INFO 로그로 남긴다.
 
 ### 울음 검출
 
@@ -141,7 +189,7 @@ status.details[0].Unpack(info)
 ### 울음별 음역대 판정
 
 `EmergencyAnalyzer`는 검출된 울음마다 대표 음높이를 구하고 음역대 안인지 판정한다.
-`EmergencyJudgement.in_band_chirps`가 캡처의 음역대 안 울음이다.
+`EmergencyJudgement.in_band_chirps`가 캡처의 음역대 안 울음, 즉 짹이다.
 
 | 기준 | 기본값 |
 | --- | --- |
@@ -153,12 +201,16 @@ status.details[0].Unpack(info)
 - 음역대 양 끝값 포함. 음역대 밖 울음은 횟수에서 제외한다.
 - 판정 기준 변경: `OnsetCriteria` 또는 `EmergencyCriteria`를 생성해 각 분석기의 `criteria` 인자로 전달한다.
 
-### gRPC·SQS 응답의 위급 판정
+### 결과의 위급 판정과 울음 수
 
 `CycleAnalyzer`는 각 캡처의 음역대 안 울음 수를 `chirp_count`로 사용한다.
 `captured_at` 순서로 처리한 캡처 중 현재 캡처의 `captured_at`부터 30초 전까지의 횟수를 합산하고(30초 경계 포함),
-`window_chirp_count >= 7`이면 응답의 `is_emergency`가 true다.
-시간 창은 분석 호출마다 초기화되며, gRPC 스트림 간 또는 SQS 사이클 간에 누적되지 않는다.
+`window_chirp_count >= 7`이면 결과의 `is_emergency`가 true다.
+시간 창은 사이클마다 초기화되며, 사이클 사이에 누적되지 않는다.
+
+위급 판정과 별개로, 앵무 소리로 판정된 캡처는 음역대와 관계없이 울음 검출이 찾은 울음 전체 수를 `call_count`로 남긴다.
+앵무가 아니거나 음량 게이트에서 걸린 캡처의 `call_count`는 0이다.
+분석에 실패한 캡처가 하나라도 있으면 워커는 사이클 결과를 발행하지 않고 요청을 DLQ로 옮긴다([처리 규칙](#처리-규칙)).
 
 저장소 루트에서 다음 예제로 도메인 분석기 두 결과를 확인할 수 있다.
 
@@ -181,56 +233,16 @@ print(len(analysis.calls), len(judgement.in_band_chirps))  # 7 7
 PYTHON
 ```
 
-## proto
-
-| 항목 | 값 |
-| --- | --- |
-| 인터페이스 정의 원본 | `proto/buddybird/ai/v1/onset.proto` |
-| 생성 코드 | `buddybird/ai/v1/`, git에 커밋 |
-| 생성 명령 | `make proto` |
-| 생성 코드 요구 버전 | grpcio 1.84.0 이상, protobuf 7.35.1 이상 |
-
-- 생성 코드 검사: Ruff 검사 제외, mypy는 함께 생성한 `.pyi` 사용
-- CI: `lint` 작업에서 `make proto` 실행 후 `buddybird/` 변경이 있으면 실패
-- 필드 규칙: 필드 추가만 허용, 기존 필드 번호의 삭제와 변경 금지
-
-proto를 수정하면 `make proto`로 생성 코드를 갱신하고 함께 커밋한다.
-
-### OnsetService
-
-`AnalyzeSession`은 세션 하나에 여는 양방향 스트림이다. 서버는 요청 스트림 수신을 완료한 뒤 캡처를 분석하고 응답한다.
-
-| 요청 메시지 | 필드 | 값 |
-| --- | --- | --- |
-| `SessionStart` | `session_id` | `audio_captures.client_session_id` |
-| `CaptureInput` | `capture_id` | `audio_captures.client_capture_id` |
-| `CaptureInput` | `s3_key` | 데이터 버킷의 세션 소리 객체 key `user/<user_id>/session/<session_id>/sound/<file_id>` |
-| `CaptureInput` | `captured_at` | `audio_captures.captured_at` |
-
-- 첫 메시지: `start`
-- 이후 메시지: `captured_at` 순서의 `capture`. 순서가 달라도 서버가 `captured_at`으로 정렬
-- 응답: 캡처마다 `capture_id`, `chirp_count`, `window_chirp_count`, `is_emergency`를 포함한 메시지 1개
-- 응답 시점: 클라이언트가 전송을 끝낸 뒤 `captured_at` 순서로 한꺼번에 전송
-- 캡처 분석: 최대 4개씩 동시에 처리, 실패한 캡처는 `chirp_count` 0
-- 시간 창: 30초, 스트림이 열려 있는 동안만 유지, 스트림이 끊기면 초기화
-- 서버 등록: `app/main.py`에서 `OnsetServicer` 등록
-
-### buddybird-api 공유
-
-1. ai-api에서 proto를 수정하고 `make proto` 결과와 함께 PR을 merge한다.
-2. `dev` merge 커밋에 `proto-v<버전>` 태그를 생성한다.
-3. buddybird-api에 proto 파일을 복사하고 파일 첫 줄 주석에 기준 태그를 작성한다.
-4. buddybird-api에서 코드를 생성해 커밋한다.
-
 ## SQS 사이클 분석
 
 buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 분석해 결과 큐로 발행한다.
-gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 사용한다.
+모델 로딩이 끝나면 워커가 요청 큐 조회를 시작한다.
 
 | 환경 변수 | 값 |
 | --- | --- |
-| `SQS_PARROT_SOUND_DETECTION_QUEUE_URL` | 요청 큐 URL. 없으면 워커 미실행 |
-| `SQS_JUDGMENT_RESULT_QUEUE_URL` | 결과 큐 URL. 요청 큐 URL이 있으면 필수 |
+| `SQS_PARROT_SOUND_DETECTION_QUEUE_URL` | 요청 큐 URL. 필수 |
+| `SQS_PARROT_SOUND_DETECTION_DLQ_URL` | 요청 큐의 DLQ URL. 처리에 실패한 요청을 바로 옮김. 필수 |
+| `SQS_JUDGMENT_RESULT_QUEUE_URL` | 결과 큐 URL. 필수 |
 | `SQS_ENDPOINT_URL` | 로컬 elasticmq 주소. 운영에서는 비움 |
 | `AUDIO_S3_BUCKET` | 캡처 오디오 버킷 |
 
@@ -247,10 +259,11 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
 }
 ```
 
-- `sounds`: 사이클의 캡처 전체, 1개 이상. 순서 무관
+- `sounds`: 사이클의 캡처 전체. 순서 무관. 빈 배열이면 `sounds: []`, `call_count: 0`, `is_emergency: false` 결과를 발행
 - `sound_id`: `session_sounds.id`
 - `object_key`: `files.file_path`. 데이터 버킷의 `user/{user_id}/session/{session_id}/sound/{file_id}`
-- `captured_at`: ISO 8601, 시간대 필수
+- `captured_at`: ISO 8601, 시간대 포함
+- 워커는 buddybird-api가 보낸 값을 검증하지 않고 그대로 읽는다. `type`도 확인하지 않는다. 필드가 없거나 읽을 수 없으면 처리 실패로 본다
 
 ### 결과 메시지
 
@@ -262,15 +275,17 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
   "model_version": "parrot-sound-gate@v2.0.0",
   "analyzed_at": "2026-09-23T10:05:12.345678+00:00",
   "is_emergency": false,
+  "call_count": 11,
   "sounds": [
     {"sound_id": "0199…", "is_parrot": true, "score": 0.93,
-     "chirp_count": 4, "window_chirp_count": 6, "is_emergency": false}
+     "call_count": 11, "chirp_count": 4, "window_chirp_count": 4, "is_emergency": false}
   ]
 }
 ```
 
 - `sounds`: `captured_at` 순서
-- `score`: 앵무 소리 판정 확률. `is_parrot`이 false면 `chirp_count` 0
+- `score`: 앵무 소리 판정 확률. `is_parrot`이 false면 `call_count`와 `chirp_count` 0
+- `call_count`: 캡처의 울음 전체 수, 음역대 무관. 최상위 값은 사이클 안 캡처의 합
 - `window_chirp_count`: 직전 30초 안 같은 사이클 캡처의 chirp 합. 사이클 사이에는 이어지지 않음
 - `is_emergency`: 캡처별로 `window_chirp_count` 7 이상. 최상위 값은 캡처 중 하나라도 true
 
@@ -279,10 +294,13 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
 | 상황 | 동작 |
 | --- | --- |
 | 분석 성공 | 결과 발행 후 요청 삭제 |
-| 캡처 하나라도 실패 | 결과 미발행, 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름 |
-| 형식이 잘못된 요청 | 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름. 빈 값, `null`, 타입이 다른 필드, 시간대 없는 `captured_at` 포함 |
-| 분석이 길어짐 | 60초마다 요청 가시성을 300초로 연장 |
-| 서버 종료(`SIGTERM`) | 새 수신 중단, 처리 중인 사이클은 최대 25초 대기. 넘기면 요청을 즉시 큐에 반환 |
+| 처리 실패(요청을 읽지 못함, 캡처 하나라도 분석 실패, 결과 발행 실패) | 결과 미발행. 재시도 없이 요청 본문을 DLQ로 옮기고 요청 삭제. 실패 이유는 메시지 속성 `error`에 남김(최대 1000자) |
+| 결과 발행 뒤 요청 삭제 실패 | 성공으로 처리. 요청이 다시 보이면 같은 결과를 한 번 더 발행 |
+| DLQ 전송 실패 | 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름 |
+| 처리가 가시성 시간(300초)을 넘김 | 연장하지 않음. 요청이 큐에 다시 보임. 현재 사이클 처리는 2~16초 |
+| 종료(`SIGTERM`) | 새 수신 중단, 처리 중인 사이클은 최대 25초 대기. 넘기면 요청을 즉시 큐에 반환 |
+| 워커가 스스로 종료 | 프로세스를 오류로 종료. ECS가 task를 다시 띄움 |
+| 추론 연속 3회 실패 | Slack 알림, 헬스체크 비정상. ECS 작업 정의에 헬스체크가 있으면 task 교체(BB-439) |
 
 - 중복 결과: 결과 발행 뒤 요청 삭제 전에 종료되면 같은 결과를 다시 발행. buddybird-api에서 `session_id`, `cycle`, `model_version`으로 중복 제거
 - 처리 시간: 사이클마다 `사이클 분석 완료 … elapsed=` 로그
@@ -293,11 +311,11 @@ gRPC 서버와 같은 프로세스에서 실행하며 판정 모델을 함께 �
 
 실제 dev SQS와 데이터 버킷을 사용한다. Docker가 필요 없고 dev 버킷 읽기 권한이 있는 AWS 인증(`aws sso login`)이 필요하다.
 
-1. `.env.example`을 `.env.dev`로 복사하고 dev 리전, 버킷, 두 큐 URL을 채운다. 값은 aws-infra 출력이나 AWS 콘솔에서 확인한다.
-2. 서버를 실행한다.
+1. `.env.example`을 `.env.dev`로 복사하고 dev 리전, 버킷, 세 큐 URL(요청, 요청 DLQ, 결과)을 채운다. 값은 aws-infra 출력이나 AWS 콘솔에서 확인한다.
+2. 워커를 실행한다.
 
 ```sh
-make local ENV_FILE=.env.dev port=50061
+make local ENV_FILE=.env.dev
 ```
 
 다른 터미널에서 요청을 보내고 결과를 확인한다. `object_key`는 dev 버킷에 있는 오디오 key를 사용한다.
@@ -321,11 +339,13 @@ aws sqs receive-message --queue-url "$SQS_JUDGMENT_RESULT_QUEUE_URL" --wait-time
 docker run --rm -p 9324:9324 softwaremill/elasticmq-native
 aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name request
 aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name result
+aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name request-dlq
 
 AWS_DEFAULT_REGION=ap-northeast-2 \
 SQS_ENDPOINT_URL=http://localhost:9324 \
 SQS_PARROT_SOUND_DETECTION_QUEUE_URL=http://localhost:9324/000000000000/request \
 SQS_JUDGMENT_RESULT_QUEUE_URL=http://localhost:9324/000000000000/result \
+SQS_PARROT_SOUND_DETECTION_DLQ_URL=http://localhost:9324/000000000000/request-dlq \
 AUDIO_S3_BUCKET='실제-dev-데이터-버킷명' \
 make local
 ```
@@ -351,7 +371,7 @@ HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 
    - `_GATE_REVISION`: 새 태그
    - `_GATE_FILE`: 새 태그의 파일명
    - `_PERCH_REVISION`: 새 태그 `model_manifest.json`의 Perch 커밋
-2. `make local`로 모델 다운로드와 서버 시작 확인
+2. `make local ENV_FILE=.env.dev`로 모델 다운로드와 워커 시작 확인
 3. `make check`, `make test` 통과 확인
 4. 이 README의 모델 표 갱신 후 PR 생성, `dev` merge
 5. GitHub Actions `deploy` 워크플로 수동 실행. 이미지 빌드 때 새 모델이 포함됨
@@ -359,7 +379,7 @@ HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 
 ## 컨테이너
 
 - 실행 명령: `python -m app.main`
-- 노출 포트: 50051
+- 헬스체크 명령: `python -m app.health`
 - 의존성: `uv sync --locked --no-dev --no-install-project`로 설치
 - 이미지 아키텍처: 배포 워크플로에서 `linux/arm64`로 빌드
 - 판정 모델: 빌드 때 `python -m app.onset.infra.parrot_gate`로 받아 `HF_HOME=/app/models`에 저장
@@ -369,10 +389,12 @@ HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 
 
 ```sh
 docker build -t buddybird-ai-api:local .
-docker run --rm -p 50051:50051 --name buddybird-ai-api buddybird-ai-api:local
+docker run --rm --env-file .env.dev --name buddybird-ai-api buddybird-ai-api:local
 # 별도 터미널에서 실행
-docker exec buddybird-ai-api python -m core.grpc.healthcheck
+docker exec buddybird-ai-api python -m app.health
 ```
+
+- `.env.dev`의 AWS 인증은 컨테이너에 따로 전달해야 한다. 예: `-v ~/.aws:/root/.aws:ro -e AWS_PROFILE=<프로필>`
 
 ### ECR 이미지 배포
 
@@ -400,12 +422,11 @@ docker exec buddybird-ai-api python -m core.grpc.healthcheck
 - Ruff 규칙: `pyproject.toml`의 `[tool.ruff.lint]`
 - mypy 설정: `pyproject.toml`의 `[tool.mypy]`
   - strict 모드
-  - 검사 대상: `app`, `core`, `tests`
-  - 타입 스텁이 없는 `google.rpc`, `grpc_health`, `grpc_status`: import 검사 제외
+  - 검사 대상: `app`, `tests`
 - pytest 설정: `pytest.ini`
   - `DeprecationWarning` 숨김
 - GitHub Actions: `dev`와 `main` 대상 PR 또는 수동 실행 시 `lint`, `test` 실행
-  - `lint` 작업: `ruff check`, `ruff format --check`, `mypy`, proto 생성 코드 검사
+  - `lint` 작업: `ruff check`, `ruff format --check`, `mypy`
   - 작업 실패 시 Slack 알림
   - 필요한 저장소 secret: `SLACK_WEBHOOK_URL`
 
@@ -417,11 +438,8 @@ uv run --no-sync ruff check .
 uv run --no-sync ruff format --check .
 uv run --no-sync mypy
 make test
-make proto
-git status --short -- buddybird
 ```
 
-마지막 명령에 출력이 없어야 생성 코드가 proto와 일치한다.
 특정 테스트만 실행하려면 `make test ARGS="tests/test_emergency.py -q"`를 사용한다.
 
 ## 브랜치
@@ -446,3 +464,7 @@ PR을 merge하기 전에 CI 결과와 리뷰를 확인한다.
 - BB-494
 - BB-495
 - BB-498
+- BB-509
+- BB-538
+- BB-544
+- BB-552

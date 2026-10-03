@@ -1,4 +1,4 @@
-.PHONY: setup test local health proto check
+.PHONY: setup test local check
 
 
 setup:
@@ -12,16 +12,7 @@ test:
 ENV_FILE ?= .env
 
 local:
-	$(if $(port),GRPC_PORT=$(port)) uv run $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE)) python -m app.main
-
-health:
-	uv run python -m core.grpc.healthcheck --target 127.0.0.1:$(or $(port),50051)
-
-proto:
-	uv run python -m grpc_tools.protoc -I proto \
-		--python_out=. --grpc_python_out=. \
-		--mypy_out=. --mypy_grpc_out=. \
-		proto/buddybird/ai/v1/onset.proto
+	uv run $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE)) python -m app.main
 
 check:
 	uv run ruff check --fix

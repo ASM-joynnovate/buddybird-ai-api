@@ -1,13 +1,5 @@
-from core.errors import CustomError
+class InvalidAudioSignalError(ValueError):
+    """분석할 수 없는 입력 오디오. 모델 장애가 아니므로 헬스체크의 추론 실패로 세지 않는다."""
 
-
-class InvalidAudioSignalError(CustomError):
-    code = 422
-    error_code = "ONSET__INVALID_AUDIO_SIGNAL"
-    message = "분석할 수 없는 음성 신호입니다."
-
-
-class InvalidOnsetCriteriaError(CustomError):
-    code = 500
-    error_code = "ONSET__INVALID_CRITERIA"
-    message = "onset 판정 기준 설정이 올바르지 않습니다."
+    def __init__(self, *, detail: object) -> None:
+        super().__init__(f"분석할 수 없는 음성 신호입니다: {detail}")

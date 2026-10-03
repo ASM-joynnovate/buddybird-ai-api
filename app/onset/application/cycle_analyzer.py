@@ -1,4 +1,4 @@
-"""사이클 단위 캡처 분석. gRPC 서비스와 SQS 워커가 함께 사용한다."""
+"""사이클 단위 캡처 분석. SQS 워커가 사용한다."""
 
 from __future__ import annotations
 
@@ -12,7 +12,9 @@ from typing import Protocol
 
 import numpy as np
 
+from app.health import HealthState
 from app.onset.domain.emergency import EmergencyAnalyzer
+from app.onset.domain.exceptions import InvalidAudioSignalError
 from app.onset.domain.loudness import is_too_quiet, maxwin_db
 from app.onset.domain.services import OnsetAnalyzer
 from app.onset.infra.parrot_gate import GateResult
@@ -44,20 +46,25 @@ class CaptureResult:
     capture_id: str
     is_parrot: bool
     probability: float
+    call_count: int
     chirp_count: int
     window_chirp_count: int
     is_emergency: bool
+    too_quiet: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class _Scored:
     is_parrot: bool
     probability: float
+    call_count: int
     chirp_count: int
+    too_quiet: bool = False
 
 
-_FAILED = _Scored(is_parrot=False, probability=0.0, chirp_count=0)
-_TOO_QUIET = _Scored(is_parrot=False, probability=0.0, chirp_count=0)
+_TOO_QUIET = _Scored(
+    is_parrot=False, probability=0.0, call_count=0, chirp_count=0, too_quiet=True
+)
 
 
 class _Window:
@@ -80,31 +87,25 @@ class CycleAnalyzer:
         *,
         load_audio: AudioLoader = download_audio_async,
         max_concurrency: int = MAX_CONCURRENT_CAPTURES,
+        health: HealthState | None = None,
     ) -> None:
         self._gate = gate
         self._load_audio = load_audio
         self._max_concurrency = max_concurrency
+        self._health = health or HealthState()
         self._onset = OnsetAnalyzer()
         self._emergency = EmergencyAnalyzer()
 
-    async def analyze(
-        self, captures: Sequence[CaptureInput], *, tolerate_failures: bool
-    ) -> list[CaptureResult]:
+    async def analyze(self, captures: Sequence[CaptureInput]) -> list[CaptureResult]:
         """captured_at 순으로 정렬한 결과를 돌려준다.
 
-        tolerate_failures가 False면 캡처 하나라도 실패할 때 예외를 올린다.
+        캡처 하나라도 실패하면 ExceptionGroup을 올린다. 워커는 사이클 요청을 DLQ로 옮긴다.
         """
         semaphore = asyncio.Semaphore(self._max_concurrency)
 
         async def score(cap: CaptureInput) -> _Scored:
             async with semaphore:
-                try:
-                    return await self._score(cap)
-                except Exception:
-                    if not tolerate_failures:
-                        raise
-                    logger.exception("capture %s 분석 실패", cap.capture_id)
-                    return _FAILED
+                return await self._score(cap)
 
         async with asyncio.TaskGroup() as tg:
             tasks = [tg.create_task(score(cap)) for cap in captures]
@@ -123,9 +124,11 @@ class CycleAnalyzer:
                     capture_id=cap.capture_id,
                     is_parrot=scored.is_parrot,
                     probability=scored.probability,
+                    call_count=scored.call_count,
                     chirp_count=scored.chirp_count,
                     window_chirp_count=window_count,
                     is_emergency=window_count >= threshold,
+                    too_quiet=scored.too_quiet,
                 )
             )
         return results
@@ -142,18 +145,28 @@ class CycleAnalyzer:
         )
         if too_quiet:
             return _TOO_QUIET
-        gate_result = await self._gate.predict_async(audio, sr)
-        chirp_count = 0
-        if gate_result.is_parrot:
-            chirp_count = await asyncio.to_thread(self._count_chirps, audio, sr)
+        try:
+            gate_result = await self._gate.predict_async(audio, sr)
+            call_count = chirp_count = 0
+            if gate_result.is_parrot:
+                call_count, chirp_count = await asyncio.to_thread(
+                    self._count_calls_and_chirps, audio, sr
+                )
+        except InvalidAudioSignalError:
+            raise
+        except Exception:
+            self._health.inference_failed()
+            raise
+        self._health.inference_succeeded()
         return _Scored(
             is_parrot=gate_result.is_parrot,
             probability=gate_result.probability,
+            call_count=call_count,
             chirp_count=chirp_count,
         )
 
-    def _count_chirps(self, audio: np.ndarray, sr: int) -> int:
+    def _count_calls_and_chirps(self, audio: np.ndarray, sr: int) -> tuple[int, int]:
         samples = audio.astype(np.float64)
         analysis = self._onset.analyze(samples=samples, sample_rate=sr)
         judgement = self._emergency.judge(analysis=analysis, samples=samples)
-        return len(judgement.in_band_chirps)
+        return len(analysis.calls), len(judgement.in_band_chirps)

@@ -5,7 +5,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.onset.domain.entities import Call, OnsetAnalysis
-from app.onset.domain.exceptions import InvalidOnsetCriteriaError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -19,28 +18,11 @@ class EmergencyCriteria:
     fft_size: int = 1024
     fft_hop_samples: int = 160
 
-    def __post_init__(self) -> None:
-        invalid: dict[str, float | int] = {}
-        if not 0 < self.band_low_hz < self.band_high_hz:
-            invalid["band_low_hz"] = self.band_low_hz
-            invalid["band_high_hz"] = self.band_high_hz
-        if not 0 < self.peak_search_low_hz <= self.band_low_hz:
-            invalid["peak_search_low_hz"] = self.peak_search_low_hz
-        if self.min_consecutive_chirps < 1:
-            invalid["min_consecutive_chirps"] = self.min_consecutive_chirps
-        if self.fft_size < 2:
-            invalid["fft_size"] = self.fft_size
-        if self.fft_hop_samples < 1:
-            invalid["fft_hop_samples"] = self.fft_hop_samples
-        if invalid:
-            raise InvalidOnsetCriteriaError(detail=invalid)
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Chirp:
-    """울음 하나와 그 대표 음높이."""
+    """울음 하나의 대표 음높이와 음역대 판정."""
 
-    call: Call
     peak_hz: float
     in_band: bool
 
@@ -83,7 +65,6 @@ class EmergencyAnalyzer:
             sample_rate=call.sample_rate,
         )
         return Chirp(
-            call=call,
             peak_hz=peak_hz,
             in_band=self.criteria.band_low_hz <= peak_hz <= self.criteria.band_high_hz,
         )

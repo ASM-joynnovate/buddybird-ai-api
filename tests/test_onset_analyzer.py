@@ -1,15 +1,9 @@
-import math
-from collections.abc import Callable
-
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
 from app.onset.domain.entities import OnsetAnalysis, OnsetCriteria
-from app.onset.domain.exceptions import (
-    InvalidAudioSignalError,
-    InvalidOnsetCriteriaError,
-)
+from app.onset.domain.exceptions import InvalidAudioSignalError
 from app.onset.domain.services import OnsetAnalyzer
 
 SAMPLE_RATE = 16000
@@ -80,17 +74,15 @@ def test_silence_up_to_max_call_silence_is_bridged(
     calls = analyze(signal).calls
     assert len(calls) == expected_calls
     if expected_calls == 1:
-        assert calls[0].active_seconds == pytest.approx(0.2)
-        assert calls[0].offset_seconds - calls[0].onset_seconds == pytest.approx(0.3)
+        assert calls[0].active_samples == round(0.2 * SAMPLE_RATE)
+        assert calls[0].end_sample - calls[0].start_sample == round(0.3 * SAMPLE_RATE)
 
 
 def test_call_boundaries() -> None:
     signal = np.concatenate([silence(0.5), repeat([0.2, 0.3], 0.5), silence(0.5)])
     first, second = analyze(signal).calls
-    assert first.onset_seconds == pytest.approx(0.5)
-    assert first.offset_seconds == pytest.approx(0.7)
-    assert second.onset_seconds == pytest.approx(1.2)
-    assert second.offset_seconds == pytest.approx(1.5)
+    assert (first.start_sample, first.end_sample) == (8000, 11200)
+    assert (second.start_sample, second.end_sample) == (19200, 24000)
 
 
 def test_partial_last_frame_uses_actual_samples() -> None:
@@ -133,16 +125,3 @@ def test_time_criteria_scale_with_sample_rate(
 def test_invalid_signal_raises(signal: NDArray[np.float64], sample_rate: int) -> None:
     with pytest.raises(InvalidAudioSignalError):
         analyze(signal, sample_rate=sample_rate)
-
-
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: OnsetCriteria(frame_ms=0),
-        lambda: OnsetCriteria(min_call_ms=-1),
-        lambda: OnsetCriteria(gate_dbfs=math.nan),
-    ],
-)
-def test_invalid_criteria_raises(build: Callable[[], OnsetCriteria]) -> None:
-    with pytest.raises(InvalidOnsetCriteriaError):
-        build()
