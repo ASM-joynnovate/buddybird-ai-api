@@ -36,3 +36,31 @@ jobs:
         run: |
           docker build --platform linux/arm64 -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: notify deploy success
+        if: success()
+        uses: ./.github/actions/notify-slack
+        continue-on-error: true
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          title: ✅ deploy 성공 ${{ inputs.image_tag || github.sha }}
+          fields: |
+            이미지=${{ vars.ECR_REPOSITORY }}:${{ inputs.image_tag || github.sha }}
+            브랜치=${{ github.ref_name }}
+            실행자=${{ github.actor }}
+          buttons: |
+            실행 로그=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: notify deploy failure
+        if: failure()
+        uses: ./.github/actions/notify-slack
+        continue-on-error: true
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          title: ❌ deploy 실패 ${{ inputs.image_tag || github.sha }}
+          fields: |
+            이미지=${{ vars.ECR_REPOSITORY }}:${{ inputs.image_tag || github.sha }}
+            브랜치=${{ github.ref_name }}
+            실행자=${{ github.actor }}
+          buttons: |
+            실행 로그=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

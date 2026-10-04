@@ -16,8 +16,50 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: notify release published
+        if: steps.release.outputs.release_created == 'true'
+        uses: ./.github/actions/notify-slack
+        continue-on-error: true
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          title: 🚀 릴리스 발행 ${{ steps.release.outputs.tag_name }}
+          fields: |
+            버전=${{ steps.release.outputs.version }}
+            커밋=${{ steps.release.outputs.sha }}
+          buttons: |
+            릴리스 노트=${{ steps.release.outputs.html_url }}
+
+      - name: notify release pr
+        if: steps.release.outputs.prs_created == 'true'
+        uses: ./.github/actions/notify-slack
+        continue-on-error: true
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          title: 📝 release PR 갱신 ${{ fromJSON(steps.release.outputs.pr).title }}
+          fields: |
+            PR=#${{ fromJSON(steps.release.outputs.pr).number }}
+            브랜치=${{ fromJSON(steps.release.outputs.pr).headBranchName }} → main
+          buttons: |
+            PR 확인=${{ github.server_url }}/${{ github.repository }}/pull/${{ fromJSON(steps.release.outputs.pr).number }}
+
+      - name: notify release failure
+        if: failure()
+        uses: ./.github/actions/notify-slack
+        continue-on-error: true
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          title: ❌ release 실패
+          fields: |
+            커밋=${{ github.sha }}
+            실행자=${{ github.actor }}
+          buttons: |
+            실행 로그=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
