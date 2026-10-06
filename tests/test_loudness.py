@@ -1,12 +1,10 @@
 import numpy as np
 import pytest
 
-from app.onset.domain.loudness import TOO_QUIET_DBFS, is_too_quiet, maxwin_db
+from app.loudness import TOO_QUIET_DBFS, is_too_quiet, maxwin_db
 
 
 def reference_maxwin_db(audio: np.ndarray, sr: int) -> float:
-    """parrot-mimicry scripts/step2/classify_folder.py maxwin_db()의 계산부 사본."""
-
     def rms_to_db(rms: float) -> float:
         return 20.0 * float(np.log10(rms + 1e-12))
 
@@ -40,13 +38,13 @@ def test_short_burst_in_long_silence_is_not_diluted() -> None:
     assert maxwin_db(audio, sr) == pytest.approx(-20.0)
 
 
-def test_clip_shorter_than_window_uses_whole_rms() -> None:
+def test_audio_shorter_than_window_uses_whole_rms() -> None:
     audio = np.full(800, 0.01)
 
     assert maxwin_db(audio, 16000) == pytest.approx(-40.0)
 
 
-def test_empty_clip_is_too_quiet() -> None:
+def test_empty_audio_is_too_quiet() -> None:
     assert is_too_quiet(maxwin_db(np.array([]), 16000))
 
 

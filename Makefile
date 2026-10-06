@@ -12,7 +12,8 @@ test:
 ENV_FILE ?= .env
 
 local:
-	uv run $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE)) python -m app.main
+	docker build -t buddybird-audio-ai:local .
+	docker run --rm -p 8080:8080 $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE)) -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN buddybird-audio-ai:local
 
 check:
 	uv run ruff check --fix
