@@ -22,7 +22,6 @@ class SoundResult:
     score: float
     call_count: int
     chirp_count: int
-    too_quiet: bool
 
 
 def analyze(gate: ParrotGate, audio_id: str, object_key: str) -> SoundResult:
@@ -47,7 +46,6 @@ def analyze(gate: ParrotGate, audio_id: str, object_key: str) -> SoundResult:
             score=0.0,
             call_count=0,
             chirp_count=0,
-            too_quiet=True,
         )
 
     score, is_parrot = gate.predict(audio, sample_rate)
@@ -65,5 +63,4 @@ def analyze(gate: ParrotGate, audio_id: str, object_key: str) -> SoundResult:
         score=score,
         call_count=call_count,
         chirp_count=chirp_count,
-        too_quiet=False,
     )

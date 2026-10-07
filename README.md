@@ -13,8 +13,7 @@ HTTP나 gRPC로 요청을 받지 않는다.
 | `app/parrot_gate.py` | 앵무 소리 판정 모델. 이미지 빌드 때 모델을 받아 가공하는 스크립트 포함 |
 | `app/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
 | `app/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
-| `app/metrics.py` | 배치 분석 지표를 구조화 로그로 기록 |
-| `tests/` | 울음 검출, 음량 게이트, handler 부분 실패, 지표 테스트 |
+| `tests/` | 울음 검출, 음량 게이트, handler 부분 실패 테스트 |
 
 ## 준비
 
@@ -76,34 +75,6 @@ aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queu
 SQS_ENDPOINT_URL=http://host.docker.internal:9324
 SQS_JUDGMENT_RESULT_QUEUE_URL=http://host.docker.internal:9324/000000000000/judgment-result
 ```
-
-## 지표
-
-배치마다 지표를 JSON 한 줄(`"event": "batch_metrics"`)로 표준 출력에 남긴다.
-CloudWatch 사용자 지정 지표를 만들지 않아 추가 비용이 없고, 예외 없이 틀린 값을 내는 모델 이상(앵무 판정 0%, score 고정)을 CloudWatch Logs Insights로 조회해 확인한다.
-
-| 필드 | 값 |
-| --- | --- |
-| `env` | `APP_ENV` |
-| `FailedSounds` | 배치에서 처리에 실패한 소리 수. 요청 읽기, 분석, 결과 발행 중 하나라도 실패하면 셈 |
-| `Sounds` | 결과를 발행한 소리 수 |
-| `ParrotSounds` | 앵무 소리로 판정된 소리 수 |
-| `TooQuietSounds` | 음량 게이트에서 걸린 소리 수 |
-| `CallCount` | 울음 전체 수 합계 |
-| `BatchSeconds` | 배치 처리 시간(초) |
-| `ScoreMean`, `ScoreStdDev` | 음량 게이트를 통과한 소리의 `score` 평균과 표준편차. 통과한 소리가 없으면 생략 |
-
-Logs Insights 조회 예:
-
-```text
-fields @timestamp, env, Sounds, ParrotSounds, TooQuietSounds, ScoreStdDev
-| filter event = "batch_metrics"
-| stats sum(ParrotSounds) / sum(Sounds) as parrot_rate, avg(ScoreStdDev) by bin(1h)
-```
-
-- 확인할 이상: 소리가 있는데 `parrot_rate`가 계속 0, `ScoreStdDev`가 0에 가까움, too_quiet 비율이 평소(약 5.6%)에서 크게 벗어남, `BatchSeconds` 급증
-- 이 조건을 알림으로 옮길 기준값은 운영 로그가 쌓인 뒤 정한다
-- Lambda가 제한 시간 때문에 중단되면 그 배치의 지표 줄은 남지 않는다
 
 ## 울음 분석
 
@@ -192,7 +163,8 @@ Lambda는 배치 안에서 최대 4개 소리를 동시에 분석하고, 소리�
 | `SQS_JUDGMENT_RESULT_QUEUE_URL` | 결과 큐 URL. 필수. 없으면 초기화 단계에서 실패 |
 | `AUDIO_S3_BUCKET` | 소리 버킷. 없으면 모든 메시지가 처리 실패 |
 | `SQS_ENDPOINT_URL` | 로컬 elasticmq 주소. 운영에서는 비움 |
-| `APP_ENV` | 지표 로그의 `env`. 비우면 `local` |
+| `APP_ENV` | Sentry environment. 비우면 `local` |
+| `SENTRY_DSN` | buddybird-audio-ai Sentry 프로젝트 DSN. 비우면 Sentry로 보내지 않음 |
 | `LOG_LEVEL` | 로그 수준. 기본값 `INFO` |
 
 | Lambda 설정 | 값 |
