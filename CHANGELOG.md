@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.0.0...v1.1.0) (2026-10-07)
+
+
+### Features
+
+* add Sentry tracing and judgment logs ([f5dd7e7](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/f5dd7e7b9591b306ff7427a06074ee61afd042b5))
+* add Sentry tracing and judgment logs [BB-618] ([b89af7f](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/b89af7f203530e71108ad8f2f84694e4078e0015))
+
 ## 1.0.0 (2026-10-07)
 
 
