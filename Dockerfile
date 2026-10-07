@@ -1,24 +1,27 @@
-FROM python:3.12-slim
+FROM public.ecr.aws/lambda/python:3.12-arm64 AS build
 
-ENV PYTHONUNBUFFERED=1 \
-    UV_COMPILE_BYTECODE=1 \
+ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never \
-    HF_HOME=/app/models
+    UV_PYTHON_DOWNLOADS=never
 
-WORKDIR /app
+WORKDIR /build
 
 RUN pip install --no-cache-dir uv==0.12.10
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --group build --no-install-project
+RUN uv export --frozen --no-dev --no-emit-project -o requirements.txt
+RUN uv pip install --target /opt/packages -r requirements.txt
 
-COPY app ./app
+COPY app/__init__.py app/parrot_gate.py ./app/
+RUN .venv/bin/python -m app.parrot_gate
 
-ENV PATH="/app/.venv/bin:$PATH"
+FROM public.ecr.aws/lambda/python:3.12-arm64
 
-# 판정 모델을 이미지에 넣고, 실행 중에는 HuggingFace에 접속하지 않는다.
-RUN python -m app.onset.infra.parrot_gate
-ENV HF_HUB_OFFLINE=1
+COPY --from=build /opt/packages ${LAMBDA_TASK_ROOT}
+COPY --from=build /var/task/models ${LAMBDA_TASK_ROOT}/models
+COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
+COPY app ${LAMBDA_TASK_ROOT}/app
+RUN python -m compileall -q ${LAMBDA_TASK_ROOT}/app
 
-CMD ["python", "-m", "app.main"]
+CMD ["app.handler.handler"]

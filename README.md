@@ -1,28 +1,24 @@
-# buddybird-ai-api
+# buddybird-audio-ai
 
-Python 3.12 기반 앵무 울음 분석 워커다. buddybird-api가 SQS 요청 큐에 넣은 세션 사이클을 분석해 결과 큐로 발행한다.
-HTTP나 gRPC로 요청을 받지 않으며, 상태 확인은 [헬스체크](#헬스체크) 명령으로 한다.
+Python 3.12 기반 앵무 울음 분석 Lambda 함수다.
+buddybird-api가 SQS 요청 큐에 넣은 소리를 SQS 트리거로 받아 분석하고, 결과를 결과 큐로 발행한다.
+HTTP나 gRPC로 요청을 받지 않는다.
 
 ## 코드 구조
 
 | 경로 | 역할 |
 | --- | --- |
-| `app/main.py` | 모델 로딩, SQS 워커 실행과 종료 처리 |
-| `app/health.py` | 워커 헬스 상태 기록과 컨테이너 헬스체크 명령 |
-| `app/alert.py` | 운영 알림을 Slack 수신 웹훅으로 전송 |
-| `app/metrics.py` | 사이클 분석 지표를 구조화 로그로 기록 |
-| `app/onset/application/` | 사이클 분석, SQS 워커 |
-| `app/onset/infra/` | 앵무 소리 판정 모델, S3 오디오 로더, SQS 클라이언트 |
-| `app/onset/domain/entities.py` | 울음·분석 결과와 `OnsetCriteria` |
-| `app/onset/domain/services.py` | `OnsetAnalyzer`: 울음 검출 |
-| `app/onset/domain/emergency.py` | `EmergencyAnalyzer`, `EmergencyCriteria`: 울음별 음역대 판정 |
-| `app/onset/domain/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
-| `app/onset/domain/exceptions.py` | 분석 입력 오류 |
-| `tests/` | 분석 로직, SQS 워커, 헬스체크, 지표 테스트 |
+| `app/handler.py` | Lambda 핸들러. 모델 로딩, SQS 배치 처리, 결과 발행 |
+| `app/sound_analyzer.py` | 소리 하나를 S3에서 읽어 음량 게이트, 앵무 소리 판정, 울음 수 계산 |
+| `app/parrot_gate.py` | 앵무 소리 판정 모델. 이미지 빌드 때 모델을 받아 가공하는 스크립트 포함 |
+| `app/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
+| `app/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
+| `app/metrics.py` | 배치 분석 지표를 구조화 로그로 기록 |
+| `tests/` | 울음 검출, 음량 게이트, handler 부분 실패, 지표 테스트 |
 
 ## 준비
 
-- 준비 환경: Python 3.12, uv, make
+- 준비 환경: Python 3.12, uv, make, Docker
 - 명령 실행 위치: 저장소 최상위 디렉터리
 
 의존성을 설치하고 커밋 전 검사 훅을 등록한다.
@@ -34,323 +30,230 @@ make setup
 `make setup`은 `uv sync`를 실행하고 git `core.hooksPath`를 `.githooks`로 지정한다.
 등록한 훅은 커밋할 Python 파일에 `ruff check --fix`와 `ruff format --check`를 실행한다.
 포맷 오류가 있으면 `uv run ruff format <파일>`로 수정한 뒤 다시 커밋한다.
-CI와 같은 잠금 버전으로 설치하려면 `uv sync --locked`를 사용한다.
+CI와 같은 잠금 버전으로 설치하려면 `uv sync --frozen`을 사용한다.
 
 ## 실행
 
-워커를 실행한다. 모델 다운로드·로딩이 끝나면 요청 큐 조회를 시작한다.
-요청 큐, 요청 DLQ, 결과 큐 URL은 필수이며, 없거나 비어 있으면 모델을 불러오기 전에 오류로 종료한다. 큐 연결 방법은 [로컬 실행](#로컬-실행)을 따른다.
-캡처 분석에는 `AUDIO_S3_BUCKET`과 해당 객체를 읽을 수 있는 AWS 인증이 필요하다.
+Lambda 이미지를 빌드하고 Runtime Interface Emulator(RIE)로 실행한다.
+RIE는 베이스 이미지에 들어 있는 로컬 Lambda 실행 서버다.
+소리 분석에는 `AUDIO_S3_BUCKET`과 그 버킷을 읽을 수 있는 AWS 임시 자격 증명이 필요하다.
+
+1. `.env.example`을 `.env.dev`로 복사하고 리전, 버킷, 결과 큐 URL을 채운다.
+2. 임시 자격 증명을 셸 환경 변수로 내보낸 뒤 실행한다.
 
 ```sh
+eval "$(aws configure export-credentials --profile <프로필> --format env)"
 make local ENV_FILE=.env.dev
 ```
 
-| 항목 | 값 |
-| --- | --- |
-| 로그 수준 환경 변수 | `LOG_LEVEL`, 기본값 `INFO` |
-| 헬스 상태 파일 환경 변수 | `HEALTH_FILE`, 기본값 임시 디렉터리의 `buddybird-ai-api-health.json` |
-| 실행 환경 변수 | `APP_ENV`(`dev`, `prod`). 지표 로그와 알림에 표시. 기본값 `local` |
-| 알림 웹훅 환경 변수 | `ALERT_SLACK_WEBHOOK_URL`. 비우면 알림 없이 로그만 남김 |
-
-- 종료: `Ctrl+C`. `SIGINT`, `SIGTERM`을 받으면 새 수신을 멈추고 처리 중인 사이클을 최대 25초 기다린다
-- 워커가 스스로 끝나면 프로세스를 오류로 종료한다. ECS가 task를 다시 띄운다
-
-## 헬스체크
-
-워커는 상태가 바뀔 때마다 `HealthState`를 헬스 상태 파일에 기록한다.
-`python -m app.health`가 파일을 읽어 판정하고, 정상이면 종료 코드 0, 비정상이면 1과 이유를 출력한다.
+3. 다른 터미널에서 SQS 이벤트를 보낸다. 응답에는 처리에 실패한 메시지가 들어 있다.
 
 ```sh
-uv run python -m app.health
+curl -XPOST "http://localhost:8080/2015-03-31/functions/function/invocations" -d '{
+  "Records": [
+    {"messageId": "m-1", "body": "{\"type\": \"audio.detect_parrot\", \"session_id\": \"s-1\", \"data\": [{\"audio_id\": \"a-1\", \"object_key\": \"<키>\", \"captured_at\": \"2026-10-06T10:00:00+00:00\"}]}"}
+  ]
+}'
+# {"batchItemFailures": []}
 ```
 
-| 비정상 조건 | 기준 |
-| --- | --- |
-| 모델 준비 전 | 모델 로딩이 끝나기 전 |
-| SQS 조회 정체 | 대기 상태로 90초 초과. long polling 20초와 수신 실패 재시도 5초에 여유를 둔 값 |
-| 사이클 처리 정체 | 처리 상태로 10분 초과. 현재 추정 최대 사이클 처리 시간(약 16초)에 여유를 둔 값 |
-| 추론 연속 실패 | 앵무 소리 판정·울음 검출 단계 연속 3회 실패 |
-| 상태 파일 없음·손상 | 파일을 읽거나 해석할 수 없음 |
+- 환경 변수는 [SQS 소리 분석](#sqs-소리-분석)의 표를 따른다.
+- `make local`은 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`을 컨테이너에 그대로 넘기고 `~/.aws`를 마운트하지 않는다. SSO 프로필은 토큰을 갱신하면서 `~/.aws/sso/cache`에 파일을 쓰므로, 읽기 전용으로 마운트하면 S3 읽기가 모두 실패한다.
+- 결과는 로컬 elasticmq로 보낸다. 실제 dev 결과 큐로 보내면 dev consumer가 그 결과를 dev DB에 저장한다.
+- 종료: `Ctrl+C`
 
-- 대기 상태: SQS 조회 직전에 기록. 처리 상태: 사이클 분석을 시작할 때 기록
-- 추론 실패에서 제외: S3 다운로드 실패, 음량 게이트에서 걸린 캡처, 입력 오디오 오류(`InvalidAudioSignalError`). 재시작으로 풀리지 않는 문제라 알람으로 확인한다
-- 추론이 한 번 성공하면 연속 실패 수를 0으로 초기화한다
-- 시간은 `time.monotonic()`으로 잰다. 같은 호스트의 프로세스끼리 공유되는 시계라 워커와 확인 명령이 같은 기준을 쓴다
-- 기준값은 dev 배포 후 `elapsed=` 로그를 보고 조정한다
+elasticmq를 실행하고 결과 큐를 만든다.
+buddybird-api compose의 elasticmq가 이미 9324 포트에서 실행 중이면 그 `judgment-result` 큐를 사용하고, 이때 결과는 로컬 api consumer가 읽는다.
 
-ECS 작업 정의에 권장하는 설정(aws-infra BB-439):
+```sh
+docker run --rm -p 9324:9324 softwaremill/elasticmq-native
+aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name judgment-result
+```
 
-| 설정 | 값 |
-| --- | --- |
-| command | `["CMD", "python", "-m", "app.health"]` |
-| interval | 15초 |
-| timeout | 5초 |
-| retries | 3 |
-| startPeriod | 120초. 모델 로딩 실측 후 조정 |
+컨테이너 안에서는 호스트를 `host.docker.internal`로 부르므로 `.env.dev`에 다음처럼 적는다.
 
-## 알림
-
-`ALERT_SLACK_WEBHOOK_URL`이 있으면 아래 상황에서 Slack으로 알림을 보낸다. 모든 알림에 `APP_ENV`와 호스트 이름이 들어간다.
-전송은 스레드에서 하고, 실패해도 로그만 남기고 워커는 계속 동작한다.
-
-| 알림 | 조건 | 환경 |
-| --- | --- | --- |
-| `ai-api 시작` | 모델 로딩이 끝나 워커가 시작됨. 모델 버전 포함 | `prod`만 |
-| `ai-api 시작 실패` | 모델 로딩 전 오류로 종료(모델 파일, 필수 환경 변수 등) | 전체 |
-| `ai-api 비정상 종료` | 모델 로딩 후 예외로 종료(워커가 스스로 끝난 경우 포함) | 전체 |
-| `ai-api 추론 연속 실패` | 추론 연속 실패가 3회에 도달. 헬스체크 비정상 기준과 같음 | 전체 |
-| `ai-api 추론 복구` | 연속 3회 이상 실패한 뒤 추론이 다시 성공 | 전체 |
-
-- 처리에 실패해 DLQ로 간 사이클은 aws-infra의 DLQ 알람(이메일)이 알린다
-- 운영에서는 웹훅 주소를 SSM Parameter Store 보안 문자열에 두고 ECS 작업 정의의 `secrets`로 전달한다(aws-infra BB-439)
+```sh
+SQS_ENDPOINT_URL=http://host.docker.internal:9324
+SQS_JUDGMENT_RESULT_QUEUE_URL=http://host.docker.internal:9324/000000000000/judgment-result
+```
 
 ## 지표
 
-사이클마다 지표를 JSON 한 줄(`"event": "cycle_metrics"`)로 표준 출력에 남긴다. CloudWatch 사용자 지정 지표를 만들지 않아 추가 비용이 없고,
-예외 없이 틀린 값을 내는 모델 이상(앵무 판정 0%, score 고정)을 CloudWatch Logs Insights로 조회해 확인한다.
+배치마다 지표를 JSON 한 줄(`"event": "batch_metrics"`)로 표준 출력에 남긴다.
+CloudWatch 사용자 지정 지표를 만들지 않아 추가 비용이 없고, 예외 없이 틀린 값을 내는 모델 이상(앵무 판정 0%, score 고정)을 CloudWatch Logs Insights로 조회해 확인한다.
 
 | 필드 | 값 |
 | --- | --- |
 | `env` | `APP_ENV` |
-| `CycleFailures` | 성공 0, 실패 1(요청 읽기, 분석, 결과 발행 중 하나라도 실패). 실패한 사이클은 이 값만 남김. 결과 발행 뒤 요청 삭제 실패는 성공으로 셈 |
-| `Captures` | 사이클 캡처 수 |
-| `ParrotCaptures` | 앵무 소리로 판정된 캡처 수 |
-| `TooQuietCaptures` | 음량 게이트에서 걸린 캡처 수 |
+| `FailedSounds` | 배치에서 처리에 실패한 소리 수. 요청 읽기, 분석, 결과 발행 중 하나라도 실패하면 셈 |
+| `Sounds` | 결과를 발행한 소리 수 |
+| `ParrotSounds` | 앵무 소리로 판정된 소리 수 |
+| `TooQuietSounds` | 음량 게이트에서 걸린 소리 수 |
 | `CallCount` | 울음 전체 수 합계 |
-| `EmergencyCycles` | 위급 캡처가 있으면 1 |
-| `CycleSeconds` | 사이클 처리 시간(초) |
-| `ScoreMean`, `ScoreStdDev` | 음량 게이트를 통과한 캡처의 `score` 평균과 표준편차. 통과한 캡처가 없으면 생략 |
+| `BatchSeconds` | 배치 처리 시간(초) |
+| `ScoreMean`, `ScoreStdDev` | 음량 게이트를 통과한 소리의 `score` 평균과 표준편차. 통과한 소리가 없으면 생략 |
 
 Logs Insights 조회 예:
 
 ```text
-fields @timestamp, env, Captures, ParrotCaptures, TooQuietCaptures, ScoreStdDev
-| filter event = "cycle_metrics"
-| stats sum(ParrotCaptures) / sum(Captures) as parrot_rate, avg(ScoreStdDev) by bin(1h)
+fields @timestamp, env, Sounds, ParrotSounds, TooQuietSounds, ScoreStdDev
+| filter event = "batch_metrics"
+| stats sum(ParrotSounds) / sum(Sounds) as parrot_rate, avg(ScoreStdDev) by bin(1h)
 ```
 
-- 확인할 이상: 캡처가 있는데 `parrot_rate`가 계속 0, `ScoreStdDev`가 0에 가까움, too_quiet 비율이 평소(약 5.6%)에서 크게 벗어남, `CycleSeconds` 급증
-- 이 조건을 Slack 알림으로 옮길 기준값은 운영 로그가 쌓인 뒤 정한다
+- 확인할 이상: 소리가 있는데 `parrot_rate`가 계속 0, `ScoreStdDev`가 0에 가까움, too_quiet 비율이 평소(약 5.6%)에서 크게 벗어남, `BatchSeconds` 급증
+- 이 조건을 알림으로 옮길 기준값은 운영 로그가 쌓인 뒤 정한다
+- Lambda가 제한 시간 때문에 중단되면 그 배치의 지표 줄은 남지 않는다
 
-## 도메인 오류
+## 울음 분석
 
-`app/onset/domain/exceptions.py`의 오류는 `ValueError`를 상속하고, 원인을 `detail`로 받아 메시지에 포함한다.
-
-| 오류 | 발생 조건 |
-| --- | --- |
-| `InvalidAudioSignalError` | 다차원 입력, NaN·무한대 샘플, 0 이하 샘플레이트. 입력 문제라 헬스체크의 추론 실패로 세지 않음 |
-
-## 울음 분석과 위급 판정
-
-`CycleAnalyzer`는 캡처마다 다음 순서로 분석한다.
+`sound_analyzer.analyze`는 소리마다 다음 순서로 분석한다.
 
 ```text
-S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate) → 울음 검출 → 울음별 음역대 판정
+S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate) → 울음 검출 → 짹 수 계산
 ```
 
-- 음량 게이트에서 걸리면 이후 단계를 건너뛰고 앵무가 아닌 캡처로 처리한다.
-- 울음 검출과 음역대 판정은 앵무 소리로 판정된 캡처에만 한다.
+- 음량 게이트에서 걸리면 이후 단계를 건너뛰고 앵무가 아닌 소리로 처리한다.
+- 울음 검출과 짹 수 계산은 앵무 소리로 판정된 소리에만 한다.
 
 | 용어 | 뜻 | 결과 필드 |
 | --- | --- | --- |
 | 울음(call) | 울음 검출이 찾은 소리 구간 하나, 음역대 무관 | `call_count` |
-| 짹(chirp) | 울음 중 대표 음높이가 위급 음역대 안인 것 | `chirp_count` |
+| 짹(chirp) | 울음 중 대표 음높이가 4,600~8,000 Hz인 것 | `chirp_count` |
 
 짹은 울음의 일부이므로 `chirp_count`는 항상 `call_count` 이하다.
-두 도메인 분석기(울음 검출, 울음별 음역대 판정)는 캡처 하나를 대상으로 한다.
+앵무가 아니거나 음량 게이트에서 걸린 소리의 `call_count`와 `chirp_count`는 0이다.
+위급 판정은 buddybird-api가 결과를 저장할 때 한다.
+소리를 포함한 직전 30초의 `chirp_count` 합계가 7 이상이면 위급 구간이다.
 
 ### 음량 게이트
 
-`maxwin_db`는 100 ms 창을 100 ms 간격으로 옮기며 구한 RMS의 최댓값을 dBFS로 돌려준다.
-긴 무음 속 짧은 울음이 평균에 희석되지 않도록 전체 RMS 대신 최대 창을 쓴다. 창보다 짧은 캡처는 전체를 한 창으로 본다.
+`maxwin_db`는 100 ms window를 100 ms 간격으로 옮기며 구한 RMS의 최댓값을 dBFS로 돌려준다.
+긴 무음 속 짧은 울음이 평균에 희석되지 않도록 전체 RMS 대신 가장 큰 window 값을 사용한다.
+window보다 짧은 소리는 전체를 window 하나로 본다.
 
 | 기준 | 값 |
 | --- | --- |
-| 창 길이·간격 | 100 ms |
-| `too_quiet` | `maxwin_db` < −39 dBFS, −39.0은 통과 |
+| window 길이와 간격 | 100 ms |
+| `too_quiet` | `maxwin_db` < −39 dBFS, −39.0은 통과. BB-371에서 확정한 값 |
 
-- 기준 출처: parrot-mimicry `docs/step1-loudness-gate/spec-step1-loudness-gate.md`, 계산은 `scripts/step2/classify_folder.py`의 `maxwin_db()`와 같다.
-- `too_quiet` 캡처 결과: `is_parrot=false`, `score=0.0`, `call_count=0`, `chirp_count=0`. 결과 형식에 별도 필드는 없고, 캡처마다 `capture <id> maxwin_db=<값> too_quiet=<판정>`을 INFO 로그로 남긴다.
+- 기준 출처: parrot-mimicry `docs/step1-loudness-gate/spec-step1-loudness-gate.md`. 계산은 `scripts/step2/classify_folder.py`의 `maxwin_db()`와 같고, `tests/test_loudness.py`의 `reference_maxwin_db`가 그 계산의 사본이다.
+- `too_quiet` 소리의 결과: `is_parrot=false`, `score=0.0`, `call_count=0`, `chirp_count=0`. 소리마다 `음량 측정; audio_id=<id> maxwin_db=<값> too_quiet=<판정>`을 INFO 로그로 남긴다.
 
 ### 울음 검출
 
-`OnsetAnalyzer`는 full scale을 1로 정규화한 1차원 mono 샘플과 양수인 샘플레이트를 받는다.
-오디오 파일 디코딩이나 리샘플링은 수행하지 않는다. 빈 신호와 무음은 울음이 없는 결과를 반환하고,
-다차원 입력·NaN·무한대·0 이하 샘플레이트는 `InvalidAudioSignalError`로 거부한다.
+`detect_calls`는 full scale을 1로 정규화한 1차원 mono 샘플을 받아 울음마다 시작과 끝 샘플 위치를 돌려준다.
+기준값은 BB-494 조사에서 승인한 값이다.
 
-| `OnsetCriteria` 기준 | 기본값 |
+| 기준 | 값 |
 | --- | --- |
-| 분석 프레임 | 10 ms |
-| 활성 프레임 | RMS −39 dBFS 이상 |
+| 분석 frame | 10 ms |
+| 활성 frame | RMS −39 dBFS 이상 |
 | 한 울음으로 연결할 무음 | 100 ms 이하, 초과하면 분리 |
-| 울음 최소 길이 | 활성 프레임 합계 30 ms 이상, 무음 제외 |
+| 울음 최소 길이 | 활성 frame 합계 30 ms 이상, 무음 제외 |
 
-### 울음별 음역대 판정
+### 짹 수 계산
 
-`EmergencyAnalyzer`는 검출된 울음마다 대표 음높이를 구하고 음역대 안인지 판정한다.
-`EmergencyJudgement.in_band_chirps`가 캡처의 음역대 안 울음, 즉 짹이다.
+`count_chirps`는 울음마다 대표 음높이를 구하고, 대표 음높이가 4,600~8,000 Hz인 울음 수를 센다.
+음역대는 0912 자료를 측정해 정한 값이다.
 
-| 기준 | 기본값 |
+| 기준 | 값 |
 | --- | --- |
-| 음역대 | 4,600~8,000 Hz |
-| 위급 기준 (`min_consecutive_chirps`) | 시간 창 안 음역대 안 울음 7회 이상 |
-| 대표 음높이 | 울음 구간 전체 파워 스펙트럼의 최대 주파수 |
+| 음역대 | 4,600~8,000 Hz, 양 끝 포함 |
+| 대표 음높이 | 울음 구간을 1,024 샘플 window, 160 샘플 hop으로 나눈 파워 스펙트럼 합에서 가장 큰 주파수 |
 | 음높이 탐색 범위 | 250~8,000 Hz |
 
-- 음역대 양 끝값 포함. 음역대 밖 울음은 횟수에서 제외한다.
-- 판정 기준 변경: `OnsetCriteria` 또는 `EmergencyCriteria`를 생성해 각 분석기의 `criteria` 인자로 전달한다.
-
-### 결과의 위급 판정과 울음 수
-
-`CycleAnalyzer`는 각 캡처의 음역대 안 울음 수를 `chirp_count`로 사용한다.
-`captured_at` 순서로 처리한 캡처 중 현재 캡처의 `captured_at`부터 30초 전까지의 횟수를 합산하고(30초 경계 포함),
-`window_chirp_count >= 7`이면 결과의 `is_emergency`가 true다.
-시간 창은 사이클마다 초기화되며, 사이클 사이에 누적되지 않는다.
-
-위급 판정과 별개로, 앵무 소리로 판정된 캡처는 음역대와 관계없이 울음 검출이 찾은 울음 전체 수를 `call_count`로 남긴다.
-앵무가 아니거나 음량 게이트에서 걸린 캡처의 `call_count`는 0이다.
-분석에 실패한 캡처가 하나라도 있으면 워커는 사이클 결과를 발행하지 않고 요청을 DLQ로 옮긴다([처리 규칙](#처리-규칙)).
-
-저장소 루트에서 다음 예제로 도메인 분석기 두 결과를 확인할 수 있다.
+저장소 루트에서 다음 예제로 두 함수의 결과를 확인할 수 있다.
 
 ```sh
 uv run python - <<'PYTHON'
 import numpy as np
 
-from app.onset.domain.emergency import EmergencyAnalyzer
-from app.onset.domain.services import OnsetAnalyzer
+from app.calls import count_chirps, detect_calls
 
 sample_rate = 16000
 times = np.arange(round(0.12 * sample_rate)) / sample_rate
 chirp = 0.5 * np.sin(2 * np.pi * 5000 * times)
 silence = np.zeros(round(0.15 * sample_rate))
-samples = np.tile(np.concatenate([chirp, silence]), 7)
+audio = np.tile(np.concatenate([chirp, silence]), 7)
 
-analysis = OnsetAnalyzer().analyze(samples=samples, sample_rate=sample_rate)
-judgement = EmergencyAnalyzer().judge(analysis=analysis, samples=samples)
-print(len(analysis.calls), len(judgement.in_band_chirps))  # 7 7
+calls = detect_calls(audio, sample_rate)
+print(len(calls), count_chirps(audio, sample_rate, calls))  # 7 7
 PYTHON
 ```
 
-## SQS 사이클 분석
+## SQS 소리 분석
 
-buddybird-api가 세션 사이클 하나를 요청 큐에 넣으면, 워커가 분석해 결과 큐로 발행한다.
-모델 로딩이 끝나면 워커가 요청 큐 조회를 시작한다.
+buddybird-api가 소리 하나를 요청 큐에 넣으면, SQS 트리거가 최대 10개씩 묶어 Lambda를 호출한다.
+Lambda는 배치 안에서 최대 4개 소리를 동시에 분석하고, 소리마다 결과 메시지를 결과 큐로 발행한다.
 
 | 환경 변수 | 값 |
 | --- | --- |
-| `SQS_PARROT_SOUND_DETECTION_QUEUE_URL` | 요청 큐 URL. 필수 |
-| `SQS_PARROT_SOUND_DETECTION_DLQ_URL` | 요청 큐의 DLQ URL. 처리에 실패한 요청을 바로 옮김. 필수 |
-| `SQS_JUDGMENT_RESULT_QUEUE_URL` | 결과 큐 URL. 필수 |
+| `SQS_JUDGMENT_RESULT_QUEUE_URL` | 결과 큐 URL. 필수. 없으면 초기화 단계에서 실패 |
+| `AUDIO_S3_BUCKET` | 소리 버킷. 없으면 모든 메시지가 처리 실패 |
 | `SQS_ENDPOINT_URL` | 로컬 elasticmq 주소. 운영에서는 비움 |
-| `AUDIO_S3_BUCKET` | 캡처 오디오 버킷 |
+| `APP_ENV` | 지표 로그의 `env`. 비우면 `local` |
+| `LOG_LEVEL` | 로그 수준. 기본값 `INFO` |
+
+| Lambda 설정 | 값 |
+| --- | --- |
+| 이미지 | arm64 컨테이너 이미지 |
+| 메모리, 제한 시간 | 4,096 MB, 60초 |
+| SQS 트리거 | 배치 10개, `ReportBatchItemFailures`, 최대 동시 실행 10 |
+| 요청 큐 | 가시성 시간 360초, 5번 실패하면 DLQ로 이동 |
+
+- Lambda와 SQS 트리거는 aws-infra `buddybird-app`이 만든다
 
 ### 요청 메시지
 
 ```json
 {
-  "type": "cycle.analyze",
+  "type": "audio.detect_parrot",
   "session_id": "0199…",
-  "cycle": 3,
-  "sounds": [
-    {"sound_id": "0199…", "object_key": "user/…/session/…/sound/…", "captured_at": "2026-09-23T10:00:00Z"}
+  "data": [
+    {"audio_id": "0199…", "object_key": "user/…/session/…/sound/…/sound.wav", "captured_at": "2026-10-06T10:00:00+00:00"}
   ]
 }
 ```
 
-- `sounds`: 사이클의 캡처 전체. 순서 무관. 빈 배열이면 `sounds: []`, `call_count: 0`, `is_emergency: false` 결과를 발행
-- `sound_id`: `session_sounds.id`
-- `object_key`: `files.file_path`. 데이터 버킷의 `user/{user_id}/session/{session_id}/sound/{file_id}`
-- `captured_at`: ISO 8601, 시간대 포함
-- 워커는 buddybird-api가 보낸 값을 검증하지 않고 그대로 읽는다. `type`도 확인하지 않는다. 필드가 없거나 읽을 수 없으면 처리 실패로 본다
+- `data`: 소리 하나. 하나가 아니면 처리 실패
+- `audio_id`: buddybird-api `session_sounds.id`
+- `object_key`: 데이터 버킷의 객체 키. 예: `user/{user_id}/session/{session_id}/sound/{file_id}/sound.wav`
+- `captured_at`: 읽지 않음. 위급 판정은 buddybird-api가 함
+- Lambda는 buddybird-api가 보낸 값을 검증하지 않고 그대로 읽는다. `type`도 확인하지 않는다. 필드가 없거나 읽을 수 없으면 그 메시지는 처리 실패다.
 
 ### 결과 메시지
 
 ```json
 {
-  "type": "cycle.analyzed",
+  "type": "audio.parrot_detected",
   "session_id": "0199…",
-  "cycle": 3,
-  "model_version": "parrot-sound-gate@v2.0.0",
-  "analyzed_at": "2026-09-23T10:05:12.345678+00:00",
-  "is_emergency": false,
-  "call_count": 11,
-  "sounds": [
-    {"sound_id": "0199…", "is_parrot": true, "score": 0.93,
-     "call_count": 11, "chirp_count": 4, "window_chirp_count": 4, "is_emergency": false}
+  "analyzer_version": "buddybird-audio-ai@0.1.0",
+  "analyzed_at": "2026-10-06T14:45:32.153710+00:00",
+  "data": [
+    {"audio_id": "0199…", "is_parrot": true, "score": 0.93, "call_count": 11, "chirp_count": 4}
   ]
 }
 ```
 
-- `sounds`: `captured_at` 순서
-- `score`: 앵무 소리 판정 확률. `is_parrot`이 false면 `call_count`와 `chirp_count` 0
-- `call_count`: 캡처의 울음 전체 수, 음역대 무관. 최상위 값은 사이클 안 캡처의 합
-- `window_chirp_count`: 직전 30초 안 같은 사이클 캡처의 chirp 합. 사이클 사이에는 이어지지 않음
-- `is_emergency`: 캡처별로 `window_chirp_count` 7 이상. 최상위 값은 캡처 중 하나라도 true
+- 메시지 하나에 요청과 같은 소리 하나를 담는다
+- `analyzer_version`: `pyproject.toml`의 `name@version`. buddybird-api는 같은 소리와 같은 `analyzer_version`의 결과를 다시 받으면 무시한다
+- `analyzed_at`: 결과를 만든 UTC 시각, ISO 8601, 시간대 포함
+- `score`: 앵무 소리 판정 확률. `is_parrot`이 false면 `call_count`와 `chirp_count`는 0
+- `call_count`: 울음 전체 수, 음역대 무관
+- `chirp_count`: 짹 수
 
 ### 처리 규칙
 
 | 상황 | 동작 |
 | --- | --- |
-| 분석 성공 | 결과 발행 후 요청 삭제 |
-| 처리 실패(요청을 읽지 못함, 캡처 하나라도 분석 실패, 결과 발행 실패) | 결과 미발행. 재시도 없이 요청 본문을 DLQ로 옮기고 요청 삭제. 실패 이유는 메시지 속성 `error`에 남김(최대 1000자) |
-| 결과 발행 뒤 요청 삭제 실패 | 성공으로 처리. 요청이 다시 보이면 같은 결과를 한 번 더 발행 |
-| DLQ 전송 실패 | 요청 유지. 재수신 횟수와 DLQ 이동은 요청 큐의 redrive policy에 따름 |
-| 처리가 가시성 시간(300초)을 넘김 | 연장하지 않음. 요청이 큐에 다시 보임. 현재 사이클 처리는 2~16초 |
-| 종료(`SIGTERM`) | 새 수신 중단, 처리 중인 사이클은 최대 25초 대기. 넘기면 요청을 즉시 큐에 반환 |
-| 워커가 스스로 종료 | 프로세스를 오류로 종료. ECS가 task를 다시 띄움 |
-| 추론 연속 3회 실패 | Slack 알림, 헬스체크 비정상. ECS 작업 정의에 헬스체크가 있으면 task 교체(BB-439) |
+| 분석 성공 | 결과 발행. 요청 삭제는 SQS 트리거가 함 |
+| 요청을 읽지 못하거나 분석 또는 결과 발행 실패 | 결과 미발행. 그 메시지만 `batchItemFailures`로 돌려주고 같은 배치의 다른 메시지는 영향 없음 |
+| 실패한 메시지 | 가시성 시간 360초 뒤 다시 처리. 5번 실패하면 SQS가 DLQ로 옮기고, buddybird-api consumer가 그 소리를 failed로 표시 |
+| 60초 제한 시간 초과나 처리하지 못한 예외 | 응답이 없어 배치 전체를 다시 처리. 이미 발행한 결과도 다시 발행 |
+| 같은 요청을 다시 처리 | `analyzed_at`만 다른 같은 결과를 발행. buddybird-api가 같은 `analyzer_version` 결과를 무시 |
 
-- 중복 결과: 결과 발행 뒤 요청 삭제 전에 종료되면 같은 결과를 다시 발행. buddybird-api에서 `session_id`, `cycle`, `model_version`으로 중복 제거
-- 처리 시간: 사이클마다 `사이클 분석 완료 … elapsed=` 로그
-
-### 로컬 실행
-
-#### dev 큐에 연결
-
-실제 dev SQS와 데이터 버킷을 사용한다. Docker가 필요 없고 dev 버킷 읽기 권한이 있는 AWS 인증(`aws sso login`)이 필요하다.
-
-1. `.env.example`을 `.env.dev`로 복사하고 dev 리전, 버킷, 세 큐 URL(요청, 요청 DLQ, 결과)을 채운다. 값은 aws-infra 출력이나 AWS 콘솔에서 확인한다.
-2. 워커를 실행한다.
-
-```sh
-make local ENV_FILE=.env.dev
-```
-
-다른 터미널에서 요청을 보내고 결과를 확인한다. `object_key`는 dev 버킷에 있는 오디오 key를 사용한다.
-
-```sh
-set -a; . ./.env.dev; set +a
-aws sqs send-message --queue-url "$SQS_PARROT_SOUND_DETECTION_QUEUE_URL" \
-  --message-body '{"type":"cycle.analyze","session_id":"local-test","cycle":1,"sounds":[{"sound_id":"s1","object_key":"<key>","captured_at":"2026-09-27T10:00:00Z"}]}'
-aws sqs receive-message --queue-url "$SQS_JUDGMENT_RESULT_QUEUE_URL" --wait-time-seconds 10
-```
-
-- 사전 확인: 두 큐의 메시지 수가 0인지 확인. dev ai-api 서비스가 실행 중이면 요청을 나눠 가져가므로 사용하지 않음
-- 정리: 받은 결과는 `aws sqs delete-message`로 삭제. buddybird-api dev consumer가 결과 큐를 소비하기 시작하면 결과 확인은 consumer 로그로 대체
-- 확인 기록(2026-09-27): 소리 3개 사이클 2.8초, 결과 1건 발행과 요청 삭제, `SIGTERM` 후 14초에 정상 종료
-
-#### elasticmq
-
-큐를 로컬에서 흉내 낸다. 아직 이 절차로 실행해 본 적은 없다.
-
-```sh
-docker run --rm -p 9324:9324 softwaremill/elasticmq-native
-aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name request
-aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name result
-aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name request-dlq
-
-AWS_DEFAULT_REGION=ap-northeast-2 \
-SQS_ENDPOINT_URL=http://localhost:9324 \
-SQS_PARROT_SOUND_DETECTION_QUEUE_URL=http://localhost:9324/000000000000/request \
-SQS_JUDGMENT_RESULT_QUEUE_URL=http://localhost:9324/000000000000/result \
-SQS_PARROT_SOUND_DETECTION_DLQ_URL=http://localhost:9324/000000000000/request-dlq \
-AUDIO_S3_BUCKET='실제-dev-데이터-버킷명' \
-make local
-```
-
-- elasticmq 인증: 임의 값 허용. S3 읽기에는 dev 버킷 권한이 있는 AWS 인증 필요
+- 확인 기록(2026-10-06, RIE): 10개 배치는 실패 없이 처리, 없는 키와 JSON이 아닌 본문만 `batchItemFailures`로 반환, 제한 시간 2초에서 30개 중 일부를 발행한 뒤 중단되었고 다시 처리한 결과는 `analyzed_at`만 다름, 배치 안 동시 분석은 최대 4개
 
 ## 앵무 소리 판정 모델
 
@@ -359,57 +262,68 @@ make local
 | 판정 | `buddybird-ai/parrot-sound-gate` | `v2.0.0` | `gate-2.0.0.joblib` |
 | 임베딩 | `justinchuby/Perch-onnx` | 커밋 `da88bf8` | `perch_v2.onnx`, 409 MB |
 
-- 로컬 실행: 첫 시작 때 HuggingFace 캐시로 받고, 이후 캐시 사용
-- 컨테이너: 이미지 빌드 때 받아 넣음. 실행 중 다운로드 없음
+- 이미지 빌드 때 두 모델을 받아 `/var/task/models`에 넣는다. Perch는 `embedding` 출력만 남겨 45 MB로 줄인다.
+- 실행 중 HuggingFace 접속: 없음. 최종 이미지에는 huggingface-hub가 없음
 - HuggingFace 업로드 절차: parrot-mimicry `docs/ops/huggingface.md`
 
 ### 모델 버전 올리기
 
 HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 고정 후 PR로 교체한다.
 
-1. `app/onset/infra/parrot_gate.py`의 상수 수정
+1. `app/parrot_gate.py` 수정
    - `_GATE_REVISION`: 새 태그
-   - `_GATE_FILE`: 새 태그의 파일명
-   - `_PERCH_REVISION`: 새 태그 `model_manifest.json`의 Perch 커밋
-2. `make local ENV_FILE=.env.dev`로 모델 다운로드와 워커 시작 확인
+   - 빌드 스크립트의 판정 파일명: 새 태그의 파일명
+   - 빌드 스크립트의 Perch 커밋: 새 태그 `model_manifest.json`에 기록된 Perch 커밋
+2. `make local ENV_FILE=.env.dev`로 이미지 빌드와 요청 처리 확인
 3. `make check`, `make test` 통과 확인
 4. 이 README의 모델 표 갱신 후 PR 생성, `dev` merge
-5. GitHub Actions `deploy` 워크플로 수동 실행. 이미지 빌드 때 새 모델이 포함됨
+5. release PR을 merge하면 deploy 워크플로가 새 이미지를 dev Lambda에 반영. 버전이 오르므로 `analyzer_version`도 변경됨
 
 ## 컨테이너
 
-- 실행 명령: `python -m app.main`
-- 헬스체크 명령: `python -m app.health`
-- 의존성: `uv sync --locked --no-dev --no-install-project`로 설치
-- 이미지 아키텍처: 배포 워크플로에서 `linux/arm64`로 빌드
-- 판정 모델: 빌드 때 `python -m app.onset.infra.parrot_gate`로 받아 `HF_HOME=/app/models`에 저장
-- 실행 중 HuggingFace 접속: 없음, `HF_HUB_OFFLINE=1`
-
-로컬 이미지 실행과 헬스체크:
-
-```sh
-docker build -t buddybird-ai-api:local .
-docker run --rm --env-file .env.dev --name buddybird-ai-api buddybird-ai-api:local
-# 별도 터미널에서 실행
-docker exec buddybird-ai-api python -m app.health
-```
-
-- `.env.dev`의 AWS 인증은 컨테이너에 따로 전달해야 한다. 예: `-v ~/.aws:/root/.aws:ro -e AWS_PROFILE=<프로필>`
+- 베이스 이미지: `public.ecr.aws/lambda/python:3.12-arm64`
+- 핸들러: `app.handler.handler`
+- 빌드 단계: uv로 런타임 의존성과 빌드 전용 그룹(`huggingface-hub`, `onnx`)을 설치하고 모델을 받아 가공. 런타임 의존성은 `uv export --frozen --no-dev`와 `uv pip install --target`으로 따로 설치
+- 최종 이미지: 런타임 패키지, `app/`, `pyproject.toml`, 가공한 모델 2개. uv, uv 캐시, HuggingFace 캐시, 원본 Perch, onnx는 들어가지 않음
+- 크기(2026-10-06): 압축 351 MB, 압축을 푼 레이어 합계 약 1.02 GB. 이전 ECS 워커 이미지는 압축 822 MB
+- 초기화: 모듈을 불러올 때 모델을 한 번 올림. RIE에서 0.6~0.9초
+- `onnxruntime`을 import할 때 `blkid`, `hostname` 명령을 찾지 못했다는 줄을 stderr에 남긴다. 베이스 이미지에 두 명령이 없어서 생기며, 190개 소리 비교에서 결과에 영향이 없었다.
 
 ### ECR 이미지 배포
 
-[deploy 워크플로](.github/workflows/deploy.yml)는 `workflow_dispatch`로 수동 실행한다.
+[release 워크플로](.github/workflows/release.yml)는 `dev`에 push하면 release-please를 실행한다.
+릴리스가 만들어지면 [deploy 워크플로](.github/workflows/deploy.yml)를 호출한다.
+`main`에 push해도 deploy 워크플로가 실행된다.
 
 | 설정 | 값 |
 | --- | --- |
 | 실행 환경 | `ubuntu-24.04-arm` |
-| AWS 리전 | 저장소 variable `AWS_REGION` |
-| ECR 저장소 | 저장소 variable `ECR_REPOSITORY` |
-| 인증 | OIDC, 저장소 secret `AWS_ROLE_ARN` |
-| 이미지 태그 | 입력 `image_tag`, 비우면 실행 커밋 SHA |
+| ECR 저장소 | `jn-buddybird-audio-ai` |
+| 인증 | OIDC, 역할 `jn-buddybird-audio-ai-deploy` |
+| 이미지 태그 | `pyproject.toml`의 버전 |
+| Lambda 함수 | `dev`는 `jn-buddybird-audio-ai-dev`, `main`은 `jn-buddybird-audio-ai-prod` |
 
-워크플로는 이미지를 빌드하고 ECR에 push하는 단계까지 수행한다.
-실행 중인 서비스의 이미지 교체나 재시작 단계는 포함되어 있지 않다.
+- `dev`: 같은 버전 태그가 ECR에 없는지 확인하고 arm64 이미지를 빌드해 push한 뒤 dev Lambda의 이미지를 변경한다
+- `main`: 같은 버전 태그가 ECR에 있는지 확인하고 prod Lambda의 이미지를 변경한다. 이미지를 다시 빌드하지 않는다
+- 이미지는 `provenance: false`로 빌드한다. Lambda는 여러 플랫폼 이미지와 provenance 증명이 붙은 이미지 목록을 받지 않는다
+- 배포 시작과 결과를 Slack으로 알린다. 필요한 저장소 secret: `SLACK_WEBHOOK_URL`
+- release-please는 `uv.lock`의 프로젝트 버전을 올리지 않는다. 빌드와 CI는 `--frozen`으로 설치해 이 차이로 실패하지 않는다
+
+#### 첫 이미지
+
+Lambda는 만들 때 이미지가 ECR에 있어야 한다.
+aws-infra가 `dev-bootstrap`, `prod-bootstrap` 태그로 Lambda를 만들기 전에, ECR에 push할 수 있는 자격 증명으로 로컬에서 한 번 push한다.
+
+```sh
+REGISTRY=198252712951.dkr.ecr.ap-northeast-2.amazonaws.com
+aws ecr get-login-password --region ap-northeast-2 \
+  | docker login --username AWS --password-stdin "$REGISTRY"
+docker buildx build --platform linux/arm64 --provenance=false --push \
+  -t "$REGISTRY/jn-buddybird-audio-ai:dev-bootstrap" \
+  -t "$REGISTRY/jn-buddybird-audio-ai:prod-bootstrap" .
+```
+
+- ECR 태그는 IMMUTABLE이라 두 태그는 한 번만 push할 수 있다
 
 ## 검사
 
@@ -425,22 +339,21 @@ docker exec buddybird-ai-api python -m app.health
   - 검사 대상: `app`, `tests`
 - pytest 설정: `pytest.ini`
   - `DeprecationWarning` 숨김
-- GitHub Actions: `dev`와 `main` 대상 PR 또는 수동 실행 시 `lint`, `test` 실행
+- GitHub Actions: `dev`와 `main` 대상 PR에서 `lint`, `test` 실행
   - `lint` 작업: `ruff check`, `ruff format --check`, `mypy`
   - 작업 실패 시 Slack 알림
   - 필요한 저장소 secret: `SLACK_WEBHOOK_URL`
 
-검증 결과는 실행 시점의 코드와 환경에 따라 달라진다. 로컬에서 CI와 같은 검사를 수행하려면:
+로컬에서 CI와 같은 검사를 수행하려면 다음 명령을 실행한다.
 
 ```sh
-uv sync --locked
-uv run --no-sync ruff check .
-uv run --no-sync ruff format --check .
-uv run --no-sync mypy
-make test
+uv run --frozen --only-dev ruff check
+uv run --frozen --only-dev ruff format --check
+uv run --frozen mypy
+uv run --frozen pytest
 ```
 
-특정 테스트만 실행하려면 `make test ARGS="tests/test_emergency.py -q"`를 사용한다.
+특정 테스트만 실행하려면 `make test ARGS="tests/test_calls.py -q"`를 사용한다.
 
 ## 브랜치
 
