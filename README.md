@@ -1,6 +1,7 @@
 # buddybird-audio-ai
 
-Python 3.12 기반 앵무 울음 분석 Lambda 함수다. buddybird-api가 SQS 요청 큐에 넣은 소리를 SQS 트리거로 받아 분석하고, 결과를 결과 큐로 발행한다.
+Python 3.12 기반 앵무 울음 분석 Lambda 함수다.
+buddybird-api가 SQS 요청 큐에 넣은 소리를 SQS 트리거로 받아 분석하고, 결과를 결과 큐로 발행한다.
 HTTP나 gRPC로 요청을 받지 않는다.
 
 ## 코드 구조
@@ -33,7 +34,8 @@ CI와 같은 잠금 버전으로 설치하려면 `uv sync --frozen`을 사용한
 
 ## 실행
 
-Lambda 이미지를 빌드하고 Runtime Interface Emulator(RIE)로 실행한다. RIE는 베이스 이미지에 들어 있는 로컬 Lambda 실행 서버다.
+Lambda 이미지를 빌드하고 Runtime Interface Emulator(RIE)로 실행한다.
+RIE는 베이스 이미지에 들어 있는 로컬 Lambda 실행 서버다.
 소리 분석에는 `AUDIO_S3_BUCKET`과 그 버킷을 읽을 수 있는 AWS 임시 자격 증명이 필요하다.
 
 1. `.env.example`을 `.env.dev`로 복사하고 리전, 버킷, 결과 큐 URL을 채운다.
@@ -60,7 +62,8 @@ curl -XPOST "http://localhost:8080/2015-03-31/functions/function/invocations" -d
 - 결과는 로컬 elasticmq로 보낸다. 실제 dev 결과 큐로 보내면 dev consumer가 그 결과를 dev DB에 저장한다.
 - 종료: `Ctrl+C`
 
-elasticmq를 실행하고 결과 큐를 만든다. buddybird-api compose의 elasticmq가 이미 9324 포트에서 실행 중이면 그 `judgment-result` 큐를 사용하고, 이때 결과는 로컬 api consumer가 읽는다.
+elasticmq를 실행하고 결과 큐를 만든다.
+buddybird-api compose의 elasticmq가 이미 9324 포트에서 실행 중이면 그 `judgment-result` 큐를 사용하고, 이때 결과는 로컬 api consumer가 읽는다.
 
 ```sh
 docker run --rm -p 9324:9324 softwaremill/elasticmq-native
@@ -120,12 +123,14 @@ S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate)
 
 짹은 울음의 일부이므로 `chirp_count`는 항상 `call_count` 이하다.
 앵무가 아니거나 음량 게이트에서 걸린 소리의 `call_count`와 `chirp_count`는 0이다.
-위급 판정은 buddybird-api가 결과를 저장할 때 한다. 소리를 포함한 직전 30초의 `chirp_count` 합계가 7 이상이면 위급 구간이다.
+위급 판정은 buddybird-api가 결과를 저장할 때 한다.
+소리를 포함한 직전 30초의 `chirp_count` 합계가 7 이상이면 위급 구간이다.
 
 ### 음량 게이트
 
 `maxwin_db`는 100 ms window를 100 ms 간격으로 옮기며 구한 RMS의 최댓값을 dBFS로 돌려준다.
-긴 무음 속 짧은 울음이 평균에 희석되지 않도록 전체 RMS 대신 가장 큰 window 값을 사용한다. window보다 짧은 소리는 전체를 window 하나로 본다.
+긴 무음 속 짧은 울음이 평균에 희석되지 않도록 전체 RMS 대신 가장 큰 window 값을 사용한다.
+window보다 짧은 소리는 전체를 window 하나로 본다.
 
 | 기준 | 값 |
 | --- | --- |
@@ -287,7 +292,8 @@ HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 
 ### ECR 이미지 배포
 
 [release 워크플로](.github/workflows/release.yml)는 `dev`에 push하면 release-please를 실행한다.
-릴리스가 만들어지면 [deploy 워크플로](.github/workflows/deploy.yml)를 호출한다. `main`에 push해도 deploy 워크플로가 실행된다.
+릴리스가 만들어지면 [deploy 워크플로](.github/workflows/deploy.yml)를 호출한다.
+`main`에 push해도 deploy 워크플로가 실행된다.
 
 | 설정 | 값 |
 | --- | --- |

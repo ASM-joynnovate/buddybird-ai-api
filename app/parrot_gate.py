@@ -37,9 +37,7 @@ class ParrotGate:
         window_length = round(5.0 * _SAMPLE_RATE)
         hop_length = round(2.5 * _SAMPLE_RATE)
         if audio.size <= window_length:
-            padded = np.zeros(window_length, dtype=np.float32)
-            padded[: audio.size] = audio
-            windows = padded[None, :]
+            windows = np.pad(audio, (0, window_length - audio.size))[None, :]
         else:
             window_starts = list(range(0, audio.size - window_length + 1, hop_length))
             # 마지막 window는 소리 끝에 맞춤
