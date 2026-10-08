@@ -13,8 +13,10 @@ SAMPLE_RATE = 16000
 RESULT_URL = "http://sqs/result"
 
 
-def chirps(count: int, frequency: float = 5000.0) -> np.ndarray:
-    silence = np.zeros(int(0.15 * SAMPLE_RATE))
+def chirps(
+    count: int, frequency: float = 5000.0, silence_seconds: float = 0.15
+) -> np.ndarray:
+    silence = np.zeros(int(silence_seconds * SAMPLE_RATE))
     times = np.arange(int(0.12 * SAMPLE_RATE)) / SAMPLE_RATE
     parts = [silence]
     for _ in range(count):
@@ -27,6 +29,7 @@ SOUNDS = {
     "k/silent": np.zeros(SAMPLE_RATE, dtype=np.float32),
     "k/mixed": np.concatenate([chirps(3), chirps(2, frequency=2000.0)]),
     "k/quiet": (chirps(4) * 0.001).astype(np.float32),
+    "k/breath": chirps(3, silence_seconds=0.06),
 }
 
 
@@ -114,6 +117,12 @@ def test_call_count_includes_calls_outside_chirp_band() -> None:
     result = sound_analyzer.analyze(FakeGate(), "s1", "k/mixed")
 
     assert (result.call_count, result.chirp_count) == (5, 3)
+
+
+def test_call_count_splits_calls_that_chirp_count_bridges() -> None:
+    result = sound_analyzer.analyze(FakeGate(), "s1", "k/breath")
+
+    assert (result.call_count, result.chirp_count) == (3, 1)
 
 
 def test_loud_sound_judged_not_parrot_counts_no_calls() -> None:

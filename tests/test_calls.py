@@ -55,6 +55,15 @@ def test_silence_up_to_max_call_silence_is_bridged(
         assert calls[0][1] - calls[0][0] == round(0.3 * SAMPLE_RATE)
 
 
+@pytest.mark.parametrize(("silence_seconds", "expected_calls"), [(0.04, 1), (0.05, 2)])
+def test_max_silence_ms_sets_bridged_silence(
+    silence_seconds: float, expected_calls: int
+) -> None:
+    signal = np.concatenate([tone(0.1), silence(silence_seconds), tone(0.1)])
+    calls = detect_calls(signal, SAMPLE_RATE, max_silence_ms=40.0)
+    assert len(calls) == expected_calls
+
+
 def test_call_boundaries() -> None:
     signal = np.concatenate(
         [silence(0.5), tone(0.2), silence(0.5), tone(0.3), silence(0.5)]

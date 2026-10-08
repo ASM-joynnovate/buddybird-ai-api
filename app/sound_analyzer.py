@@ -54,9 +54,9 @@ def analyze(gate: ParrotGate, audio_id: str, object_key: str) -> SoundResult:
     chirp_count = 0
     if is_parrot:
         audio = audio.astype(np.float64)
-        calls = detect_calls(audio, sample_rate)
-        call_count = len(calls)
-        chirp_count = count_chirps(audio, sample_rate, calls)
+        # call_count는 숨 간격으로 나뉜 울음을 따로 센다. chirp는 위급 판정 기준(100 ms) 유지
+        call_count = len(detect_calls(audio, sample_rate, max_silence_ms=40.0))
+        chirp_count = count_chirps(audio, sample_rate, detect_calls(audio, sample_rate))
 
     return SoundResult(
         is_parrot=is_parrot,
