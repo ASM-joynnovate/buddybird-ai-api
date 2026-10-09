@@ -15,7 +15,7 @@ inputs:
     description: One "text=url" per line.
     default: ""
   commit-range:
-    description: "<before>..<after>. Lists up to 20 commits in the range. Requires fetch-depth 0."
+    description: "<before>..<after>. Lists up to 20 commits within Slack's 3000-character limit. Requires fetch-depth 0."
     default: ""
 
 runs:
@@ -45,17 +45,23 @@ runs:
           after="${COMMIT_RANGE##*..}"
           if [ -z "$before" ] || [[ "$before" =~ ^0+$ ]]; then
             log_args=(-1 "$after")
+            changes_url="$REPO_URL/commit/$after"
           else
             log_args=(-21 "$before..$after")
+            changes_url="$REPO_URL/compare/$before...$after"
           fi
-          commits=$(git log "${log_args[@]}" --format='%H%x1f%s%x1f%an' | jq -r -R -s --arg repo "$REPO_URL" '
+          commits=$(git log "${log_args[@]}" --format='%H%x1f%s%x1f%an' | jq -r -R -s --arg repo "$REPO_URL" --arg changes "$changes_url" '
             def esc: gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;");
+            def body: "*커밋*\n" + join("\n");
             split("\n") | map(select(length > 0))
             | if length == 0 then "" else
-                (if length > 20 then "\n...(이하 생략)" else "" end) as $more
-                | .[:20]
-                | map(split("\u001f") | "• <\($repo)/commit/\(.[0])|\(.[0][:7])> \(.[1][:80] | esc) (\(.[2] | esc))")
-                | "*커밋*\n" + join("\n") + $more
+                map(split("\u001f") | "• <\($repo)/commit/\(.[0])|\(.[0][:7])> \(.[1][:80] | esc) (\(.[2] | esc))")
+                | if length > 20 or (body | length) > 3000 then
+                    "\n...(이하 생략) <\($changes)|전체 변경 내역>" as $more
+                    | .[:20]
+                    | until((body + $more | length) <= 3000; .[:-1])
+                    | body + $more
+                  else body end
               end')
         fi
 
