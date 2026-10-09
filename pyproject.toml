@@ -1,0 +1,63 @@
+[project]
+name = "buddybird-audio-ai"
+version = "1.2.0"
+description = "BuddyBird vocal analysis API"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "boto3>=1.35.0",
+    "joblib>=1.4.0",
+    "numpy>=2.5.3",
+    "onnxruntime>=1.19.0",
+    "scikit-learn>=1.5.0",
+    "sentry-sdk>=2.69.2",
+    "soundfile>=0.14.0",
+    "soxr>=1.1.0",
+]
+
+[dependency-groups]
+build = [
+    "huggingface-hub>=0.24.0",
+    "onnx>=1.23.2",
+]
+dev = [
+    "mypy",
+    "pytest",
+    "ruff",
+]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "ASYNC",
+    "B",
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "N",
+    "PT",
+    "PTH",
+    "RUF",
+    "S",
+    "SIM",
+    "TRY",
+    "UP",
+]
+ignore = [
+    "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["app", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["boto3.*", "huggingface_hub.*", "joblib.*", "onnx.*", "onnxruntime.*", "soundfile.*", "soxr.*"]
+ignore_missing_imports = true
