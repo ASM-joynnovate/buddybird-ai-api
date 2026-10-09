@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.1.0...v1.2.0) (2026-10-09)
+
+
+### Features
+
+* count calls split by breath gaps separately [BB-638] ([#23](https://github.com/ASM-joynnovate/buddybird-ai-api/issues/23)) ([38ca810](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/38ca8103904e73d4b4f935f899853c2012a21f0d))
+
 ## [1.1.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.0.0...v1.1.0) (2026-10-07)
 
 
