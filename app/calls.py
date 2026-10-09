@@ -2,7 +2,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 
-def detect_calls(audio: NDArray[np.float64], sample_rate: int) -> list[tuple[int, int]]:
+def detect_calls(
+    audio: NDArray[np.float64],
+    sample_rate: int,
+    *,
+    max_silence_ms: float = 30.0,
+) -> list[tuple[int, int]]:
     if audio.size == 0:
         return []
 
@@ -18,13 +23,13 @@ def detect_calls(audio: NDArray[np.float64], sample_rate: int) -> list[tuple[int
     if active_frames.size == 0:
         return []
 
-    # 100 ms 이하 무음은 한 울음으로 연결
+    # max_silence_ms 이하 무음은 한 울음으로 연결
     gap_lengths = frame_starts[active_frames[1:]] - (
         frame_starts[active_frames[:-1]] + frame_sizes[active_frames[:-1]]
     )
     call_frame_ids = np.split(
         active_frames,
-        np.flatnonzero(gap_lengths > round(sample_rate * 100.0 / 1000)) + 1,
+        np.flatnonzero(gap_lengths > round(sample_rate * max_silence_ms / 1000)) + 1,
     )
 
     min_call_samples = round(sample_rate * 30.0 / 1000)
