@@ -13,7 +13,7 @@ HTTP나 gRPC로 요청을 받지 않는다.
 | `app/parrot_gate.py` | 앵무 소리 판정 모델. 이미지 빌드 때 모델을 받아 가공하는 스크립트 포함 |
 | `app/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
 | `app/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
-| `tests/` | 울음 검출, 음량 게이트, handler 부분 실패 테스트 |
+| `tests/` | 울음 검출, 음량 게이트, handler 부분 실패, Slack 알림 길이 제한 테스트 |
 
 ## 준비
 
@@ -114,7 +114,7 @@ window보다 짧은 소리는 전체를 window 하나로 본다.
 ### 울음 검출
 
 `detect_calls`는 full scale을 1로 정규화한 1차원 mono 샘플을 받아 울음마다 시작과 끝 샘플 위치를 돌려준다.
-기준값은 BB-494 조사에서 승인한 값이다.
+기본 기준은 BB-494 조사에서 승인했으며, 울음 사이 무음 허용 시간은 BB-638에서 30 ms로 조정했다.
 
 | 기준 | 값 |
 | --- | --- |
@@ -279,6 +279,8 @@ HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 
 - `main`: 같은 버전 태그가 ECR에 있는지 확인하고 prod Lambda의 이미지를 변경한다. 이미지를 다시 빌드하지 않는다
 - 이미지는 `provenance: false`로 빌드한다. Lambda는 여러 플랫폼 이미지와 provenance 증명이 붙은 이미지 목록을 받지 않는다
 - 배포 시작과 결과를 Slack으로 알린다. 필요한 저장소 secret: `SLACK_WEBHOOK_URL`
+- 알림의 커밋 목록은 최대 20개이며, 생략 안내와 전체 변경 내역 링크를 포함해 3,000자 이내로 제한한다. 초과하면 오래된 커밋부터 줄 단위로 생략한다
+- Slack 알림 전송이 실패해도 배포는 계속 진행한다. 알림이 없을 때는 GitHub Actions 실행 결과로 배포 성공 여부를 확인한다
 - release-please는 `uv.lock`의 프로젝트 버전을 올리지 않는다. 빌드와 CI는 `--frozen`으로 설치해 이 차이로 실패하지 않는다
 
 #### 첫 이미지
@@ -311,6 +313,7 @@ docker buildx build --platform linux/arm64 --provenance=false --push \
   - 검사 대상: `app`, `tests`
 - pytest 설정: `pytest.ini`
   - `DeprecationWarning` 숨김
+  - Slack 알림 테스트 실행에는 Bash와 `jq`가 필요. 실제 Slack 전송 없이 액션이 생성한 JSON을 검증
 - GitHub Actions: `dev`와 `main` 대상 PR에서 `lint`, `test` 실행
   - `lint` 작업: `ruff check`, `ruff format --check`, `mypy`
   - 작업 실패 시 Slack 알림
@@ -353,3 +356,5 @@ PR을 merge하기 전에 CI 결과와 리뷰를 확인한다.
 - BB-538
 - BB-544
 - BB-552
+- BB-638
+- BB-651
