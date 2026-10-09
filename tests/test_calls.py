@@ -44,7 +44,7 @@ def test_call_shorter_than_min_call_is_dropped(
     assert len(detect_calls(signal, SAMPLE_RATE)) == expected_calls
 
 
-@pytest.mark.parametrize(("silence_seconds", "expected_calls"), [(0.1, 1), (0.11, 2)])
+@pytest.mark.parametrize(("silence_seconds", "expected_calls"), [(0.03, 1), (0.04, 2)])
 def test_silence_up_to_max_call_silence_is_bridged(
     silence_seconds: float, expected_calls: int
 ) -> None:
@@ -52,7 +52,7 @@ def test_silence_up_to_max_call_silence_is_bridged(
     calls = detect_calls(signal, SAMPLE_RATE)
     assert len(calls) == expected_calls
     if expected_calls == 1:
-        assert calls[0][1] - calls[0][0] == round(0.3 * SAMPLE_RATE)
+        assert calls[0][1] - calls[0][0] == round(0.23 * SAMPLE_RATE)
 
 
 @pytest.mark.parametrize(("silence_seconds", "expected_calls"), [(0.04, 1), (0.05, 2)])
@@ -83,7 +83,7 @@ def test_frames_below_minus_39_dbfs_are_not_calls(
     assert len(detect_calls(signal, SAMPLE_RATE)) == expected_calls
 
 
-@pytest.mark.parametrize(("silence_seconds", "expected_calls"), [(0.1, 1), (0.11, 2)])
+@pytest.mark.parametrize(("silence_seconds", "expected_calls"), [(0.03, 1), (0.04, 2)])
 def test_call_timing_scales_with_sample_rate(
     silence_seconds: float, expected_calls: int
 ) -> None:

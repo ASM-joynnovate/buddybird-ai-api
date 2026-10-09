@@ -6,7 +6,7 @@ def detect_calls(
     audio: NDArray[np.float64],
     sample_rate: int,
     *,
-    max_silence_ms: float = 100.0,
+    max_silence_ms: float = 30.0,
 ) -> list[tuple[int, int]]:
     if audio.size == 0:
         return []

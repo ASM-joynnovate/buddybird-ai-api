@@ -30,6 +30,8 @@ SOUNDS = {
     "k/mixed": np.concatenate([chirps(3), chirps(2, frequency=2000.0)]),
     "k/quiet": (chirps(4) * 0.001).astype(np.float32),
     "k/breath": chirps(3, silence_seconds=0.06),
+    "k/seven-30ms": chirps(7, silence_seconds=0.03),
+    "k/seven-40ms": chirps(7, silence_seconds=0.04),
 }
 
 
@@ -119,10 +121,19 @@ def test_call_count_includes_calls_outside_chirp_band() -> None:
     assert (result.call_count, result.chirp_count) == (5, 3)
 
 
-def test_call_count_splits_calls_that_chirp_count_bridges() -> None:
+def test_call_and_chirp_counts_split_breath_gaps() -> None:
     result = sound_analyzer.analyze(FakeGate(), "s1", "k/breath")
 
-    assert (result.call_count, result.chirp_count) == (3, 1)
+    assert (result.call_count, result.chirp_count) == (3, 3)
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"), [("k/seven-30ms", 1), ("k/seven-40ms", 7)]
+)
+def test_emergency_chirp_count_uses_30ms_gap(key: str, expected: int) -> None:
+    result = sound_analyzer.analyze(FakeGate(), "s1", key)
+
+    assert (result.call_count, result.chirp_count) == (expected, expected)
 
 
 def test_loud_sound_judged_not_parrot_counts_no_calls() -> None:
