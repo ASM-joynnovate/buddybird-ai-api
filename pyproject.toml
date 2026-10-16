@@ -19,11 +19,26 @@ build = [
     "huggingface-hub>=0.24.0",
     "onnx>=1.23.2",
 ]
+mimic = [
+    "imageio-ffmpeg==0.6.0",
+    "librosa==1.0.0",
+    "numba==0.67.0",
+    "torch==2.13.0",
+    "transformers==5.16.1",
+]
 dev = [
     "mypy",
     "pytest",
     "ruff",
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 target-version = "py312"
@@ -59,5 +74,5 @@ strict = true
 files = ["app", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["boto3.*", "huggingface_hub.*", "joblib.*", "onnx.*", "onnxruntime.*", "soundfile.*", "soxr.*"]
+module = ["boto3.*", "huggingface_hub.*", "joblib.*", "judge.*", "onnx.*", "onnxruntime.*", "soundfile.*", "soxr.*"]
 ignore_missing_imports = true
