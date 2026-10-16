@@ -7,9 +7,9 @@ import boto3
 import numpy as np
 import soundfile
 
-from app.calls import count_chirps, detect_calls
-from app.loudness import is_too_quiet, maxwin_db
-from app.parrot_gate import ParrotGate
+from app.parrot_sound.calls import count_chirps, detect_calls
+from app.parrot_sound.gate import ParrotGate
+from app.parrot_sound.loudness import is_too_quiet, maxwin_db
 
 logger = logging.getLogger(__name__)
 

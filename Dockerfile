@@ -13,8 +13,9 @@ RUN uv sync --frozen --no-dev --group build --no-install-project
 RUN uv export --frozen --no-dev --no-emit-project -o requirements.txt
 RUN uv pip install --target /opt/packages -r requirements.txt
 
-COPY app/__init__.py app/parrot_gate.py ./app/
-RUN .venv/bin/python -m app.parrot_gate
+COPY app/__init__.py ./app/
+COPY app/parrot_sound/__init__.py app/parrot_sound/gate.py ./app/parrot_sound/
+RUN .venv/bin/python -m app.parrot_sound.gate
 
 FROM public.ecr.aws/lambda/python:3.12-arm64
 

@@ -1,58 +1,13 @@
-import io
 import json
+from types import ModuleType
 from typing import Any
 
-import numpy as np
 import pytest
-import soundfile
 
-from app import sound_analyzer
-from app.parrot_gate import ParrotGate
+from app.parrot_sound.gate import ParrotGate
+from tests.parrot_sound.fakes import FakeGate
 
-SAMPLE_RATE = 16000
 RESULT_URL = "http://sqs/result"
-
-
-def chirps(
-    count: int, frequency: float = 5000.0, silence_seconds: float = 0.15
-) -> np.ndarray:
-    silence = np.zeros(int(silence_seconds * SAMPLE_RATE))
-    times = np.arange(int(0.12 * SAMPLE_RATE)) / SAMPLE_RATE
-    parts = [silence]
-    for _ in range(count):
-        parts.extend([0.5 * np.sin(2 * np.pi * frequency * times), silence])
-    return np.concatenate(parts).astype(np.float32)
-
-
-SOUNDS = {
-    "k/four": chirps(4),
-    "k/silent": np.zeros(SAMPLE_RATE, dtype=np.float32),
-    "k/mixed": np.concatenate([chirps(3), chirps(2, frequency=2000.0)]),
-    "k/quiet": (chirps(4) * 0.001).astype(np.float32),
-    "k/breath": chirps(3, silence_seconds=0.06),
-    "k/seven-30ms": chirps(7, silence_seconds=0.03),
-    "k/seven-40ms": chirps(7, silence_seconds=0.04),
-}
-
-
-class FakeS3:
-    def get_object(self, **params: str) -> dict[str, io.BytesIO]:
-        body = io.BytesIO()
-        soundfile.write(
-            body, SOUNDS[params["Key"]], SAMPLE_RATE, format="WAV", subtype="FLOAT"
-        )
-        body.seek(0)
-        return {"Body": body}
-
-
-class FakeGate(ParrotGate):
-    def __init__(self, *, is_parrot: bool = True) -> None:
-        self.is_parrot = is_parrot
-        self.calls = 0
-
-    def predict(self, audio: np.ndarray, sample_rate: int) -> tuple[float, bool]:
-        self.calls += 1
-        return (0.9 if self.is_parrot else 0.2), self.is_parrot
 
 
 class FakeSqs:
@@ -64,10 +19,16 @@ class FakeSqs:
         self.sent.append(json.loads(params["MessageBody"]))
 
 
-@pytest.fixture(autouse=True)
-def fake_s3(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AUDIO_S3_BUCKET", "bucket")
-    monkeypatch.setattr(sound_analyzer, "_s3", FakeS3())
+@pytest.fixture
+def handler(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-2")
+    monkeypatch.setenv("SQS_JUDGMENT_RESULT_QUEUE_URL", RESULT_URL)
+    monkeypatch.setattr(ParrotGate, "__init__", lambda self: None)
+    from app import handler
+
+    monkeypatch.setattr(handler, "_gate", FakeGate())
+    monkeypatch.setattr(handler, "_sqs", FakeSqs())
+    return handler
 
 
 def record(message_id: str, audio_id: str, object_key: str) -> dict[str, Any]:
@@ -86,17 +47,8 @@ def record(message_id: str, audio_id: str, object_key: str) -> dict[str, Any]:
 
 
 def test_failed_sound_is_reported_and_others_are_published(
-    monkeypatch: pytest.MonkeyPatch,
+    handler: ModuleType,
 ) -> None:
-    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-2")
-    monkeypatch.setenv("SQS_JUDGMENT_RESULT_QUEUE_URL", RESULT_URL)
-    monkeypatch.setattr(ParrotGate, "__init__", lambda self: None)
-    from app import handler
-
-    sqs = FakeSqs()
-    monkeypatch.setattr(handler, "_gate", FakeGate())
-    monkeypatch.setattr(handler, "_sqs", sqs)
-
     response = handler.handler(
         {
             "Records": [
@@ -111,47 +63,5 @@ def test_failed_sound_is_reported_and_others_are_published(
     assert response == {"batchItemFailures": [{"itemIdentifier": "m-2"}]}
     assert sorted(
         (body["data"][0]["audio_id"], body["data"][0]["chirp_count"])
-        for body in sqs.sent
+        for body in handler._sqs.sent
     ) == [("s1", 4), ("s3", 0)]
-
-
-def test_call_count_includes_calls_outside_chirp_band() -> None:
-    result = sound_analyzer.analyze(FakeGate(), "s1", "k/mixed")
-
-    assert (result.call_count, result.chirp_count) == (5, 3)
-
-
-def test_call_and_chirp_counts_split_breath_gaps() -> None:
-    result = sound_analyzer.analyze(FakeGate(), "s1", "k/breath")
-
-    assert (result.call_count, result.chirp_count) == (3, 3)
-
-
-@pytest.mark.parametrize(
-    ("key", "expected"), [("k/seven-30ms", 1), ("k/seven-40ms", 7)]
-)
-def test_emergency_chirp_count_uses_30ms_gap(key: str, expected: int) -> None:
-    result = sound_analyzer.analyze(FakeGate(), "s1", key)
-
-    assert (result.call_count, result.chirp_count) == (expected, expected)
-
-
-def test_loud_sound_judged_not_parrot_counts_no_calls() -> None:
-    result = sound_analyzer.analyze(FakeGate(is_parrot=False), "s1", "k/four")
-
-    assert (result.is_parrot, result.call_count, result.chirp_count) == (False, 0, 0)
-
-
-def test_too_quiet_sound_skips_gate() -> None:
-    gate = FakeGate()
-
-    results = [
-        sound_analyzer.analyze(gate, "s1", "k/quiet"),
-        sound_analyzer.analyze(gate, "s2", "k/four"),
-    ]
-
-    assert gate.calls == 1
-    assert [(r.is_parrot, r.score, r.call_count, r.chirp_count) for r in results] == [
-        (False, 0.0, 0, 0),
-        (True, 0.9, 4, 4),
-    ]

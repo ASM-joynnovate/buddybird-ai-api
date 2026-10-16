@@ -11,8 +11,8 @@ import boto3
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
-from app.parrot_gate import ParrotGate
-from app.sound_analyzer import analyze
+from app.parrot_sound import analyzer as parrot_sound_analyzer
+from app.parrot_sound.gate import ParrotGate
 
 logger = logging.getLogger(__name__)
 logging.getLogger().setLevel(os.getenv("LOG_LEVEL", "INFO"))
@@ -55,7 +55,10 @@ async def process_record(record: dict[str, Any], semaphore: asyncio.Semaphore) -
 
                 async with semaphore:
                     sound_result = await asyncio.to_thread(
-                        analyze, _gate, sound["audio_id"], sound["object_key"]
+                        parrot_sound_analyzer.analyze,
+                        _gate,
+                        sound["audio_id"],
+                        sound["object_key"],
                     )
 
                 result = {

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from app.loudness import TOO_QUIET_DBFS, is_too_quiet, maxwin_db
+from app.parrot_sound.loudness import TOO_QUIET_DBFS, is_too_quiet, maxwin_db
 
 
 def reference_maxwin_db(audio: np.ndarray, sr: int) -> float:

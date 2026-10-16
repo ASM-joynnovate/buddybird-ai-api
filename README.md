@@ -9,11 +9,13 @@ HTTP나 gRPC로 요청을 받지 않는다.
 | 경로 | 역할 |
 | --- | --- |
 | `app/handler.py` | Lambda 핸들러. 모델 로딩, SQS 배치 처리, 결과 발행 |
-| `app/sound_analyzer.py` | 소리 하나를 S3에서 읽어 음량 게이트, 앵무 소리 판정, 울음 수 계산 |
-| `app/parrot_gate.py` | 앵무 소리 판정 모델. 이미지 빌드 때 모델을 받아 가공하는 스크립트 포함 |
-| `app/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
-| `app/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
-| `tests/` | 울음 검출, 음량 게이트, handler 부분 실패, Slack 알림 길이 제한 테스트 |
+| `app/parrot_sound/analyzer.py` | 소리 하나를 S3에서 읽어 음량 게이트, 앵무 소리 판정, 울음 수 계산 |
+| `app/parrot_sound/gate.py` | 앵무 소리 판정 모델. 이미지 빌드 때 모델을 받아 가공하는 스크립트 포함 |
+| `app/parrot_sound/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
+| `app/parrot_sound/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
+| `tests/test_handler.py` | 결과 메시지, 메시지별 부분 실패 테스트 |
+| `tests/parrot_sound/` | 앵무 소리 분석, 울음 검출, 음량 게이트 테스트 |
+| `tests/ci/` | Slack 알림 길이 제한 테스트 |
 
 ## 준비
 
@@ -78,7 +80,7 @@ SQS_JUDGMENT_RESULT_QUEUE_URL=http://host.docker.internal:9324/000000000000/judg
 
 ## 울음 분석
 
-`sound_analyzer.analyze`는 소리마다 다음 순서로 분석한다.
+`parrot_sound.analyzer.analyze`는 소리마다 다음 순서로 분석한다.
 
 ```text
 S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate) → 울음 검출 → 짹 수 계산
@@ -140,7 +142,7 @@ window보다 짧은 소리는 전체를 window 하나로 본다.
 uv run python - <<'PYTHON'
 import numpy as np
 
-from app.calls import count_chirps, detect_calls
+from app.parrot_sound.calls import count_chirps, detect_calls
 
 sample_rate = 16000
 times = np.arange(round(0.12 * sample_rate)) / sample_rate
@@ -242,7 +244,7 @@ Lambda는 배치 안에서 최대 4개 소리를 동시에 분석하고, 소리�
 
 HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 고정 후 PR로 교체한다.
 
-1. `app/parrot_gate.py` 수정
+1. `app/parrot_sound/gate.py` 수정
    - `_GATE_REVISION`: 새 태그
    - 빌드 스크립트의 판정 파일명: 새 태그의 파일명
    - 빌드 스크립트의 Perch 커밋: 새 태그 `model_manifest.json`에 기록된 Perch 커밋
@@ -328,7 +330,7 @@ uv run --frozen mypy
 uv run --frozen pytest
 ```
 
-특정 테스트만 실행하려면 `make test ARGS="tests/test_calls.py -q"`를 사용한다.
+특정 테스트만 실행하려면 `make test ARGS="tests/parrot_sound/test_calls.py -q"`를 사용한다.
 
 ## 브랜치
 

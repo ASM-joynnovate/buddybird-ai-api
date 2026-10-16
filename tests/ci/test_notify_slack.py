@@ -40,7 +40,7 @@ def test_slack_commit_section_limit(
     count: int, subject: str, author: str, truncated: bool
 ) -> None:
     action = (
-        Path(__file__).parents[1] / ".github/actions/notify-slack/action.yml"
+        Path(__file__).parents[2] / ".github/actions/notify-slack/action.yml"
     ).read_text()
     script = textwrap.dedent(action.split("      run: |\n", 1)[1])
     # Execute the real action while replacing git input and webhook delivery.
