@@ -1,0 +1,3 @@
+import os
+
+MODEL_VERSION = os.environ["MIMIC_JUDGMENT_MODEL_VERSION"]

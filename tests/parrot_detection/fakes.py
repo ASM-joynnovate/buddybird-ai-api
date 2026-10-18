@@ -1,21 +1,22 @@
 import io
+from typing import override
 
 import numpy as np
 import soundfile
 
-from app.parrot_sound.gate import ParrotGate
+from app.parrot_detection.model import ParrotDetectionModel
 
 SAMPLE_RATE = 16000
 
 
-def chirps(
-    count: int, frequency: float = 5000.0, silence_seconds: float = 0.15
-) -> np.ndarray:
+def chirps(count: int, frequency: float = 5000.0, silence_seconds: float = 0.15) -> np.ndarray:
     silence = np.zeros(int(silence_seconds * SAMPLE_RATE))
     times = np.arange(int(0.12 * SAMPLE_RATE)) / SAMPLE_RATE
     parts = [silence]
+
     for _ in range(count):
         parts.extend([0.5 * np.sin(2 * np.pi * frequency * times), silence])
+
     return np.concatenate(parts).astype(np.float32)
 
 
@@ -30,21 +31,23 @@ SOUNDS = {
 }
 
 
-class FakeParrotSoundS3:
+class FakeParrotDetectionS3:
     def get_object(self, **params: str) -> dict[str, io.BytesIO]:
         body = io.BytesIO()
-        soundfile.write(
-            body, SOUNDS[params["Key"]], SAMPLE_RATE, format="WAV", subtype="FLOAT"
-        )
+
+        soundfile.write(body, SOUNDS[params["Key"]], SAMPLE_RATE, format="WAV", subtype="FLOAT")
         body.seek(0)
+
         return {"Body": body}
 
 
-class FakeGate(ParrotGate):
+class FakeParrotDetectionModel(ParrotDetectionModel):
     def __init__(self, *, is_parrot: bool = True) -> None:
         self.is_parrot = is_parrot
         self.calls = 0
 
+    @override
     def predict(self, audio: np.ndarray, sample_rate: int) -> tuple[float, bool]:
         self.calls += 1
+
         return (0.9 if self.is_parrot else 0.2), self.is_parrot
