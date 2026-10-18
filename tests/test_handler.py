@@ -71,62 +71,59 @@ def test_failed_sound_is_reported_and_others_are_published(
     ) == [("s1", 4), ("s3", 0)]
 
 
-def mimic_record(
-    message_id: str, words: list[dict[str, Any]], species: str | None = None
-) -> dict[str, Any]:
+def mimic_record(message_id: str, object_keys: list[str]) -> dict[str, Any]:
     body = {
         "type": "audio.judge_mimic",
         "session_id": "session-1",
-        "account_id": "user-1",
-        "species": species,
-        "data": [{"audio_id": "s1", "object_key": "q/sound.wav", "words": words}],
+        "target": {"audio_id": "s1", "object_key": "q/sound.wav"},
+        "reference": {
+            "word_id": "w-1",
+            "word_name": "안녕",
+            "object_keys": object_keys,
+        },
     }
     return {"messageId": message_id, "body": json.dumps(body)}
 
 
-def test_mimic_judgments_follow_request_word_order(handler: ModuleType) -> None:
-    words = [
-        {
-            "word_id": "w-1",
-            "name": "안녕",
-            "reference_object_keys": ["r/1.m4a", "r/2.wav"],
-        },
-        {"word_id": "w-2", "name": "사랑해", "reference_object_keys": []},
-    ]
-
-    response = handler.handler(
-        {"Records": [mimic_record("m-1", words, species="macaw")]}, None
-    )
+@pytest.mark.parametrize(
+    ("object_keys", "judgment"),
+    [
+        (
+            ["r/1.m4a", "r/2.wav"],
+            {
+                "status": "ok",
+                "is_success": True,
+                "score": 0.995,
+                "n_own": 2,
+                "n_fill": 18,
+                "set_size": 20,
+            },
+        ),
+        (
+            [],
+            {
+                "status": "no_reference",
+                "is_success": False,
+                "score": None,
+                "n_own": 0,
+                "n_fill": 0,
+                "set_size": 0,
+            },
+        ),
+    ],
+)
+def test_mimic_judgment_is_published_with_target_and_reference(
+    handler: ModuleType, object_keys: list[str], judgment: dict[str, Any]
+) -> None:
+    response = handler.handler({"Records": [mimic_record("m-1", object_keys)]}, None)
 
     assert response == {"batchItemFailures": []}
     [body] = handler._sqs.sent
     assert body["type"] == "audio.mimic_judged"
     assert body["model_version"] == "parrot-mimicry-judgment@v1.0.0"
-    assert body["data"] == [
-        {
-            "audio_id": "s1",
-            "judgments": [
-                {
-                    "word_id": "w-1",
-                    "status": "ok",
-                    "is_success": True,
-                    "score": 99.5,
-                    "n_own": 2,
-                    "n_fill": 18,
-                    "set_size": 20,
-                },
-                {
-                    "word_id": "w-2",
-                    "status": "no_reference",
-                    "is_success": False,
-                    "score": None,
-                    "n_own": 0,
-                    "n_fill": 0,
-                    "set_size": 0,
-                },
-            ],
-        }
-    ]
+    assert body["target"] == {"audio_id": "s1"}
+    assert body["reference"] == {"word_id": "w-1"}
+    assert body["judgment"] == judgment
 
 
 def test_mimic_missing_reference_fails_only_that_message(
@@ -135,16 +132,7 @@ def test_mimic_missing_reference_fails_only_that_message(
     response = handler.handler(
         {
             "Records": [
-                mimic_record(
-                    "m-1",
-                    [
-                        {
-                            "word_id": "w-1",
-                            "name": "안녕",
-                            "reference_object_keys": ["missing/1.m4a"],
-                        }
-                    ],
-                ),
+                mimic_record("m-1", ["missing/1.m4a"]),
                 record("m-2", "s2", "k/four"),
             ]
         },

@@ -14,7 +14,7 @@ HTTP나 gRPC로 요청을 받지 않는다.
 | `app/parrot_sound/download.py` | 앵무 소리 판정 모델의 버전과 파일 경로. 이미지 빌드 때 모델을 받아 가공하는 스크립트 |
 | `app/parrot_sound/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
 | `app/parrot_sound/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
-| `app/mimic/analyzer.py` | 소리와 기준음성을 S3에서 받아 단어마다 모사 판정 |
+| `app/mimic/analyzer.py` | 판정할 소리와 기준음성을 S3에서 받아 모사 판정 |
 | `app/mimic/judgment.py` | 단어 모사 판정 모델 |
 | `app/mimic/download.py` | 단어 모사 판정 모델의 버전과 파일 경로. 이미지 빌드 때 모델을 받아 해시를 확인하는 스크립트 |
 | `tests/test_handler.py` | 요청 type 분기, 결과 메시지, 메시지별 부분 실패 테스트 |
@@ -234,13 +234,16 @@ Lambda는 배치 안에서 최대 4개 소리를 동시에 분석하고, 소리�
 
 - 확인 기록(2026-10-06, RIE): 10개 배치는 실패 없이 처리, 없는 키와 JSON이 아닌 본문만 `batchItemFailures`로 반환, 제한 시간 2초에서 30개 중 일부를 발행한 뒤 중단되었고 다시 처리한 결과는 `analyzed_at`만 다름, 배치 안 동시 분석은 최대 4개
 
-## SQS 단어 모사 판정 (초안, BB-694)
+## SQS 단어 모사 판정
 
-> buddybird-api와 합의 전 초안이다. 합의하면 이 표시를 지운다.
-
-buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소리만 모사 판정을 요청한다.
+buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소리만 `mimicry-judgment` 큐로 모사 판정을 요청한다.
 모사 판정 모델은 사람 음성을 거르지 못하므로, 앵무 소리 판정을 통과하지 않은 소리는 보내지 않는다.
-같은 Lambda가 요청의 `type`으로 앵무 소리 분석과 모사 판정을 나눠 처리한다.
+같은 Lambda가 요청의 `type`으로 앵무 소리 분석과 모사 판정을 나눠 처리하고, 결과는 같은 결과 큐로 발행한다.
+
+| Lambda 설정 | 값 |
+| --- | --- |
+| SQS 트리거 | `mimicry-judgment` 큐, 배치 1개, `ReportBatchItemFailures`, 최대 동시 실행 10 |
+| 요청 큐 | 가시성 시간 360초, 5번 실패하면 DLQ로 이동 |
 
 ### 요청 메시지
 
@@ -248,26 +251,20 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 {
   "type": "audio.judge_mimic",
   "session_id": "0199…",
-  "account_id": "0199…",
-  "species": "macaw",
-  "data": [
-    {
-      "audio_id": "0199…",
-      "object_key": "user/…/session/…/sound/…/sound.wav",
-      "words": [
-        {"word_id": "0199…", "name": "안녕", "reference_object_keys": ["user/…/word/…/recording.m4a"]}
-      ]
-    }
-  ]
+  "target": {"audio_id": "0199…", "object_key": "user/…/session/…/sound/…/sound.wav"},
+  "reference": {
+    "word_id": "0199…",
+    "word_name": "안녕",
+    "object_keys": ["user/…/word/…/recording.m4a", "preset/…/recording.m4a"]
+  }
 }
 ```
 
-- `account_id`: buddybird-api `users.id` 원문. 모델이 풀에서 같은 계정의 녹음을 빼는 데 쓴다. 빠져도 오류가 나지 않고 점수만 높게 나오므로 반드시 넣는다
-- `species`: 모델의 대형조 토큰 `eclectus`, `amazon`, `cockatoo`, `macaw`, `african-grey` 중 하나 또는 null. 이 토큰이면 판정하지 않고 `unsupported_species`를 돌려준다. `parrots.species` 자유 입력을 토큰으로 바꾸는 일은 buddybird-api가 한다
-- `data`: 소리 하나. 하나가 아니면 처리 실패
-- `words`: 판정할 후보 단어. 단어마다 모델을 한 번 호출한다
-- `name`: `words.name`. 모델 풀 단어와 NFC로 정확히 같아야 풀을 쓴다. 풀이 없는 단어는 own 기준음성만으로 판정한다
-- `reference_object_keys`: 같은 계정이 그 단어로 등록한 `word_recordings` 전부의 객체 키. 0개도 가능
+- `target`: 판정할 세션 소리. `audio_id`는 `session_sounds.id`, `object_key`는 데이터 버킷의 객체 키
+- `reference`: 비교할 단어와 기준음성
+  - `word_id`: 세션의 학습 단어 `words.id`
+  - `word_name`: `words.name`. 모델 풀의 단어와 NFC로 정확히 같아야 풀을 사용한다. 풀이 없는 단어는 기준음성만으로 판정한다
+  - `object_keys`: 그 단어의 `word_recordings` 전부의 객체 키. 프리셋 녹음을 포함하고 0개도 가능
 
 ### 결과 메시지
 
@@ -278,21 +275,17 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
   "analyzer_version": "buddybird-audio-ai@1.3.0",
   "model_version": "parrot-mimicry-judgment@v1.0.0",
   "analyzed_at": "2026-10-16T05:12:03.481920+00:00",
-  "data": [
-    {
-      "audio_id": "0199…",
-      "judgments": [
-        {"word_id": "0199…", "status": "ok", "is_success": true, "score": 99.6, "n_own": 2, "n_fill": 18, "set_size": 20}
-      ]
-    }
-  ]
+  "target": {"audio_id": "0199…"},
+  "reference": {"word_id": "0199…"},
+  "judgment": {"status": "ok", "is_success": true, "score": 0.996, "n_own": 2, "n_fill": 18, "set_size": 20}
 }
 ```
 
-- `judgments`: 요청 `words`와 같은 순서, 같은 개수
-- `status`: `ok`, `no_reference`(풀과 own 기준음성이 모두 없음), `unsupported_species`
-- `is_success`: 성공 여부. `score`로 다시 계산하지 않는다
-- `score`: 비발화 앵무 소리 대비 백분위 × 100. 실패한 소리도 90점대가 흔하므로 그대로 사용자에게 보여주지 않는다. `status`가 `ok`가 아니면 null
+- `target.audio_id`, `reference.word_id`: 요청 값을 그대로 돌려준다
+- `judgment.status`: `ok` 또는 `no_reference`. `no_reference`는 풀과 기준음성이 모두 없을 때다
+- `judgment.is_success`: 성공 여부. `score`로 다시 계산하지 않는다
+- `judgment.score`: 비발화 앵무 소리 대비 백분위, 0~1. 실패한 소리도 0.9 이상이 흔하므로 그대로 사용자에게 보여주지 않는다. `status`가 `ok`가 아니면 null
+- `judgment.n_own`, `judgment.n_fill`, `judgment.set_size`: 비교 세트에 들어간 기준음성 수, 풀에서 채운 녹음 수, 둘의 합
 - `model_version`: `sound_judgments.model_version`에 저장할 값
 
 ### 처리 규칙
@@ -300,14 +293,8 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 | 상황 | 동작 |
 | --- | --- |
 | 판정 성공 | `status`와 상관없이 결과 발행 |
-| 소리나 기준음성을 읽지 못함, 빈 오디오, 디코딩 실패 | 결과 미발행, 그 메시지만 `batchItemFailures`로 반환. 이후는 앵무 소리 분석과 같음 |
-
-### 정하지 않은 것
-
-- 요청 큐: 앵무 소리 분석과 같은 큐를 쓸지, aws-infra 문서의 `mimicry-judgment` 큐를 Lambda 트리거로 하나 더 붙일지
-- 소리 하나에 여러 단어가 성공했을 때 `sound_judgments`에 무엇을 저장할지. 지금 테이블은 소리마다 `word_id` 하나
-- 메시지 하나에 넣을 수 있는 단어 수와 기준음성 수 상한. 60초 제한 시간 안에 끝나야 한다
-- `parrots.species`에서 대형조 토큰으로 바꾸는 표
+| 소리나 기준음성을 읽지 못함, 빈 오디오, 디코딩 실패 | 결과 미발행, 그 메시지를 `batchItemFailures`로 반환 |
+| 실패한 메시지 | 가시성 시간 360초 뒤 다시 처리. 5번 실패하면 SQS가 `mimicry-judgment-dlq`로 옮기고, buddybird-api consumer가 그 소리를 모사가 아닌 것으로 처리 |
 
 ## 앵무 소리 판정 모델
 
@@ -332,10 +319,10 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 - 판정 코드는 모델 저장소의 `judge` 패키지를 그대로 불러 쓴다. 의존성은 `pyproject.toml`의 `mimic` 그룹에 모델 저장소 `uv.lock`과 같은 버전으로 고정
 - Linux torch는 CPU 빌드(`download.pytorch.org/whl/cpu`)를 쓴다. PyPI 빌드는 CUDA 패키지를 함께 설치한다
 - m4a는 `imageio-ffmpeg`에 들어 있는 ffmpeg로 읽는다. 이미지에서 `/usr/local/bin/ffmpeg`로 연결
-- 모델 인스턴스 하나를 여러 스레드가 동시에 써도 되는지 검증되지 않아, 판정은 한 번에 하나씩 한다
-- 기준음성 특징과 세트는 캐시하지 않는다. 같은 계정과 단어를 반복 판정할 때 `prepare_set` 캐시를 검토한다
+- 모델 인스턴스 하나를 여러 스레드가 동시에 써도 되는지 검증되지 않았다. 모사 판정 SQS 트리거의 배치가 1개라서 한 실행 환경에서 판정이 겹치지 않는다
+- 기준음성 특징과 세트는 캐시하지 않는다. 같은 단어를 반복 판정할 때 `prepare_set` 캐시를 검토한다
 - 확인 기록(2026-10-16)
-  - macOS arm64: 공개 앵무 소리 샘플 5건에서 앱 판정 결과와 모델의 `MimicJudge.judge_audio` 결과가 같음. m4a 기준음성 포함
+  - macOS arm64: 공개 앵무 소리 샘플 5건에서 앱 판정 결과와 모델의 `MimicryJudge.judge_audio` 결과가 같음. m4a 기준음성 포함
   - Lambda 이미지(Linux arm64, CPU torch): 같은 5건의 결과가 macOS와 소수점까지 같음. 네트워크 차단, 읽기 전용 파일 시스템에서 실행
   - 초기화: 2 CPU, 메모리 4 GB 컨테이너에서 handler 모듈 로드 2.9초, 최대 메모리 1.06 GB
   - 첫 판정은 numba 컴파일로 약 2.7초, 이후 단어 하나에 0.1~1초

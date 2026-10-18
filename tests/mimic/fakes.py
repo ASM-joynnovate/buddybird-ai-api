@@ -2,7 +2,7 @@ import io
 from pathlib import Path
 from typing import Any
 
-from app.mimic.judgment import MimicJudgment, WordJudgment
+from app.mimic.judgment import MimicJudgment, MimicResult
 
 
 class FakeMimic(MimicJudgment):
@@ -10,35 +10,25 @@ class FakeMimic(MimicJudgment):
         self.calls: list[dict[str, Any]] = []
 
     def judge(
-        self,
-        query_path: Path,
-        words: list[tuple[str, list[Path]]],
-        *,
-        account_id: str,
-        species: str | None,
-    ) -> list[WordJudgment]:
+        self, target_path: Path, word_name: str, reference_paths: list[Path]
+    ) -> MimicResult:
         self.calls.append(
             {
-                "query": query_path.read_bytes(),
-                "words": [
-                    (word, [(path.suffix, path.read_bytes()) for path in paths])
-                    for word, paths in words
+                "target": target_path.read_bytes(),
+                "word_name": word_name,
+                "references": [
+                    (path.suffix, path.read_bytes()) for path in reference_paths
                 ],
-                "account_id": account_id,
-                "species": species,
             }
         )
-        return [
-            WordJudgment(
-                status="ok" if paths else "no_reference",
-                is_success=bool(paths),
-                score=99.5 if paths else None,
-                n_own=len(paths),
-                n_fill=20 - len(paths) if paths else 0,
-                set_size=20 if paths else 0,
-            )
-            for _, paths in words
-        ]
+        return MimicResult(
+            status="ok" if reference_paths else "no_reference",
+            is_success=bool(reference_paths),
+            score=0.995 if reference_paths else None,
+            n_own=len(reference_paths),
+            n_fill=20 - len(reference_paths) if reference_paths else 0,
+            set_size=20 if reference_paths else 0,
+        )
 
 
 class FakeMimicS3:

@@ -79,37 +79,31 @@ async def detect_parrot(
 async def judge_mimic(
     body: dict[str, Any], semaphore: asyncio.Semaphore
 ) -> dict[str, Any]:
-    [sound] = body["data"]
+    target = body["target"]
+    reference = body["reference"]
 
     async with semaphore:
-        word_judgments = await asyncio.to_thread(
+        mimic_result = await asyncio.to_thread(
             mimic_analyzer.analyze,
             _mimic,
-            account_id=body["account_id"],
-            species=body["species"],
-            object_key=sound["object_key"],
-            words=sound["words"],
+            target_object_key=target["object_key"],
+            word_name=reference["word_name"],
+            reference_object_keys=reference["object_keys"],
         )
 
-    judgments = [
-        {"word_id": word["word_id"], **asdict(word_judgment)}
-        for word, word_judgment in zip(sound["words"], word_judgments, strict=True)
-    ]
-    for judgment in judgments:
-        logger.info(
-            "모사 판정 결과; audio_id=%s word_id=%s status=%s is_success=%s score=%s",
-            sound["audio_id"],
-            judgment["word_id"],
-            judgment["status"],
-            judgment["is_success"],
-            judgment["score"],
-        )
-    sentry_sdk.update_current_span(
-        attributes={
-            "audio_id": sound["audio_id"],
-            "word_count": len(judgments),
-            "success_count": sum(judgment["is_success"] for judgment in judgments),
-        }
+    judgment = asdict(mimic_result)
+    attributes = {
+        "audio_id": target["audio_id"],
+        "word_id": reference["word_id"],
+        **judgment,
+    }
+
+    sentry_sdk.update_current_span(attributes=attributes)
+    logger.info(
+        "모사 판정 결과; audio_id=%(audio_id)s word_id=%(word_id)s"
+        " status=%(status)s is_success=%(is_success)s score=%(score)s"
+        " n_own=%(n_own)s n_fill=%(n_fill)s set_size=%(set_size)s",
+        attributes,
     )
 
     return {
@@ -118,7 +112,9 @@ async def judge_mimic(
         "analyzer_version": _analyzer_version,
         "model_version": MIMIC_VERSION,
         "analyzed_at": datetime.now(UTC).isoformat(),
-        "data": [{"audio_id": sound["audio_id"], "judgments": judgments}],
+        "target": {"audio_id": target["audio_id"]},
+        "reference": {"word_id": reference["word_id"]},
+        "judgment": judgment,
     }
 
 

@@ -1,11 +1,10 @@
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import boto3
 
-from app.mimic.judgment import MimicJudgment, WordJudgment
+from app.mimic.judgment import MimicJudgment, MimicResult
 
 _s3 = boto3.client("s3")
 
@@ -20,24 +19,15 @@ def _download(object_key: str, directory: Path) -> Path:
 def analyze(
     model: MimicJudgment,
     *,
-    account_id: str,
-    species: str | None,
-    object_key: str,
-    words: list[dict[str, Any]],
-) -> list[WordJudgment]:
+    target_object_key: str,
+    word_name: str,
+    reference_object_keys: list[str],
+) -> MimicResult:
     with tempfile.TemporaryDirectory() as directory:
-        query_path = _download(object_key, Path(directory))
-        word_paths = [
-            (
-                word["name"],
-                [
-                    _download(reference_key, Path(directory))
-                    for reference_key in word["reference_object_keys"]
-                ],
-            )
-            for word in words
+        target_path = _download(target_object_key, Path(directory))
+        reference_paths = [
+            _download(object_key, Path(directory))
+            for object_key in reference_object_keys
         ]
 
-        return model.judge(
-            query_path, word_paths, account_id=account_id, species=species
-        )
+        return model.judge(target_path, word_name, reference_paths)

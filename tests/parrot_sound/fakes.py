@@ -30,7 +30,7 @@ SOUNDS = {
 }
 
 
-class FakeS3:
+class FakeParrotSoundS3:
     def get_object(self, **params: str) -> dict[str, io.BytesIO]:
         body = io.BytesIO()
         soundfile.write(
