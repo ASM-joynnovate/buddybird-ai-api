@@ -9,11 +9,18 @@ HTTP나 gRPC로 요청을 받지 않는다.
 | 경로 | 역할 |
 | --- | --- |
 | `app/handler.py` | Lambda 핸들러. 모델 로딩, SQS 배치 처리, 결과 발행 |
-| `app/sound_analyzer.py` | 소리 하나를 S3에서 읽어 음량 게이트, 앵무 소리 판정, 울음 수 계산 |
-| `app/parrot_gate.py` | 앵무 소리 판정 모델. 이미지 빌드 때 모델을 받아 가공하는 스크립트 포함 |
-| `app/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
-| `app/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
-| `tests/` | 울음 검출, 음량 게이트, handler 부분 실패, Slack 알림 길이 제한 테스트 |
+| `app/parrot_sound/analyzer.py` | 소리 하나를 S3에서 읽어 음량 게이트, 앵무 소리 판정, 울음 수 계산 |
+| `app/parrot_sound/gate.py` | 앵무 소리 판정 모델 |
+| `app/parrot_sound/download.py` | 앵무 소리 판정 모델의 버전과 파일 경로. 이미지 빌드 때 모델을 받아 가공하는 스크립트 |
+| `app/parrot_sound/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
+| `app/parrot_sound/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
+| `app/mimic/analyzer.py` | 판정할 소리와 기준음성을 S3에서 받아 모사 판정 |
+| `app/mimic/judgment.py` | 단어 모사 판정 모델 |
+| `app/mimic/download.py` | 단어 모사 판정 모델의 버전과 파일 경로. 이미지 빌드 때 모델을 받아 해시를 확인하는 스크립트 |
+| `tests/test_handler.py` | 요청 type 분기, 결과 메시지, 메시지별 부분 실패 테스트 |
+| `tests/parrot_sound/` | 앵무 소리 분석, 울음 검출, 음량 게이트 테스트 |
+| `tests/mimic/` | 모사 판정 S3 다운로드 테스트 |
+| `tests/ci/` | Slack 알림 길이 제한 테스트 |
 
 ## 준비
 
@@ -78,7 +85,7 @@ SQS_JUDGMENT_RESULT_QUEUE_URL=http://host.docker.internal:9324/000000000000/judg
 
 ## 울음 분석
 
-`sound_analyzer.analyze`는 소리마다 다음 순서로 분석한다.
+`parrot_sound.analyzer.analyze`는 소리마다 다음 순서로 분석한다.
 
 ```text
 S3 다운로드 → 음량 게이트 → 앵무 소리 판정(parrot-sound-gate) → 울음 검출 → 짹 수 계산
@@ -140,7 +147,7 @@ window보다 짧은 소리는 전체를 window 하나로 본다.
 uv run python - <<'PYTHON'
 import numpy as np
 
-from app.calls import count_chirps, detect_calls
+from app.parrot_sound.calls import count_chirps, detect_calls
 
 sample_rate = 16000
 times = np.arange(round(0.12 * sample_rate)) / sample_rate
@@ -192,7 +199,7 @@ Lambda는 배치 안에서 최대 4개 소리를 동시에 분석하고, 소리�
 - `audio_id`: buddybird-api `session_sounds.id`
 - `object_key`: 데이터 버킷의 객체 키. 예: `user/{user_id}/session/{session_id}/sound/{file_id}/sound.wav`
 - `captured_at`: 읽지 않음. 위급 판정은 buddybird-api가 함
-- Lambda는 buddybird-api가 보낸 값을 검증하지 않고 그대로 읽는다. `type`도 확인하지 않는다. 필드가 없거나 읽을 수 없으면 그 메시지는 처리 실패다.
+- Lambda는 buddybird-api가 보낸 값을 검증하지 않고 그대로 읽는다. `type`은 `audio.judge_mimic`인지만 확인하고, 그 외 값은 앵무 소리 분석으로 처리한다. 필드가 없거나 읽을 수 없으면 그 메시지는 처리 실패다.
 
 ### 결과 메시지
 
@@ -227,6 +234,67 @@ Lambda는 배치 안에서 최대 4개 소리를 동시에 분석하고, 소리�
 
 - 확인 기록(2026-10-06, RIE): 10개 배치는 실패 없이 처리, 없는 키와 JSON이 아닌 본문만 `batchItemFailures`로 반환, 제한 시간 2초에서 30개 중 일부를 발행한 뒤 중단되었고 다시 처리한 결과는 `analyzed_at`만 다름, 배치 안 동시 분석은 최대 4개
 
+## SQS 단어 모사 판정
+
+buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소리만 `mimicry-judgment` 큐로 모사 판정을 요청한다.
+모사 판정 모델은 사람 음성을 거르지 못하므로, 앵무 소리 판정을 통과하지 않은 소리는 보내지 않는다.
+같은 Lambda가 요청의 `type`으로 앵무 소리 분석과 모사 판정을 나눠 처리하고, 결과는 같은 결과 큐로 발행한다.
+
+| Lambda 설정 | 값 |
+| --- | --- |
+| SQS 트리거 | `mimicry-judgment` 큐, 배치 1개, `ReportBatchItemFailures`, 최대 동시 실행 10 |
+| 요청 큐 | 가시성 시간 360초, 5번 실패하면 DLQ로 이동 |
+
+### 요청 메시지
+
+```json
+{
+  "type": "audio.judge_mimic",
+  "session_id": "0199…",
+  "target": {"audio_id": "0199…", "object_key": "user/…/session/…/sound/…/sound.wav"},
+  "reference": {
+    "word_id": "0199…",
+    "word_name": "안녕",
+    "object_keys": ["user/…/word/…/recording.m4a", "preset/…/recording.m4a"]
+  }
+}
+```
+
+- `target`: 판정할 세션 소리. `audio_id`는 `session_sounds.id`, `object_key`는 데이터 버킷의 객체 키
+- `reference`: 비교할 단어와 기준음성
+  - `word_id`: 세션의 학습 단어 `words.id`
+  - `word_name`: `words.name`. 모델 풀의 단어와 NFC로 정확히 같아야 풀을 사용한다. 풀이 없는 단어는 기준음성만으로 판정한다
+  - `object_keys`: 그 단어의 `word_recordings` 전부의 객체 키. 프리셋 녹음을 포함하고 0개도 가능
+
+### 결과 메시지
+
+```json
+{
+  "type": "audio.mimic_judged",
+  "session_id": "0199…",
+  "model_version": "parrot-mimicry-judgment@v1.0.0",
+  "analyzed_at": "2026-10-16T05:12:03.481920+00:00",
+  "target": {"audio_id": "0199…"},
+  "reference": {"word_id": "0199…"},
+  "judgment": {"status": "ok", "is_success": true, "score": 0.996, "n_own": 2, "n_fill": 18, "set_size": 20}
+}
+```
+
+- `target.audio_id`, `reference.word_id`: 요청 값을 그대로 돌려준다
+- `judgment.status`: `ok` 또는 `no_reference`. `no_reference`는 풀과 기준음성이 모두 없을 때다
+- `judgment.is_success`: 성공 여부. `score`로 다시 계산하지 않는다
+- `judgment.score`: 비발화 앵무 소리 대비 백분위, 0~1. 실패한 소리도 0.9 이상이 흔하므로 그대로 사용자에게 보여주지 않는다. `status`가 `ok`가 아니면 null
+- `judgment.n_own`, `judgment.n_fill`, `judgment.set_size`: 비교 세트에 들어간 기준음성 수, 풀에서 채운 녹음 수, 둘의 합
+- `model_version`: `sound_judgments.model_version`에 저장할 값
+
+### 처리 규칙
+
+| 상황 | 동작 |
+| --- | --- |
+| 판정 성공 | `status`와 상관없이 결과 발행 |
+| 소리나 기준음성을 읽지 못함, 빈 오디오, 디코딩 실패 | 결과 미발행, 그 메시지를 `batchItemFailures`로 반환 |
+| 실패한 메시지 | 가시성 시간 360초 뒤 다시 처리. 5번 실패하면 SQS가 `mimicry-judgment-dlq`로 옮기고, buddybird-api consumer가 그 소리를 모사 판정 실패로 기록 |
+
 ## 앵무 소리 판정 모델
 
 | 모델 | HuggingFace 저장소 | 버전 | 파일 |
@@ -238,12 +306,32 @@ Lambda는 배치 안에서 최대 4개 소리를 동시에 분석하고, 소리�
 - 실행 중 HuggingFace 접속: 없음. 최종 이미지에는 huggingface-hub가 없음
 - HuggingFace 업로드 절차: parrot-mimicry `docs/ops/huggingface.md`
 
+## 단어 모사 판정 모델
+
+| 모델 | HuggingFace 저장소 | 버전 | 파일 |
+| --- | --- | --- | --- |
+| 판정 | `buddybird-ai/parrot-mimicry-judgment` | `v1.0.0`, 커밋 `b1ba789` | `judge/`, `manifest.json`, 특징 파일 3개, 438 MB |
+| 인코더 | `lengyue233/content-vec-best` | 커밋 `ab04aa7` | `config.json`, `pytorch_model.bin`, 361 MB |
+
+- 이미지 빌드 때 두 저장소를 받아 `/var/task/models/mimic`, `/var/task/models/contentvec`에 넣는다. 번들 파일은 `manifest.json`의 SHA-256, 인코더 가중치는 manifest `encoder.sha256`과 대조하고 다르면 빌드가 실패한다
+- 실행 중 HuggingFace 접속: 없음. `HF_HUB_OFFLINE=1`, 인코더는 로컬 디렉터리에서 읽음
+- 판정 코드는 모델 저장소의 `judge` 패키지를 그대로 불러 쓴다. 의존성은 `pyproject.toml`의 `mimic` 그룹에 모델 저장소 `uv.lock`과 같은 버전으로 고정
+- Linux torch는 CPU 빌드(`download.pytorch.org/whl/cpu`)를 쓴다. PyPI 빌드는 CUDA 패키지를 함께 설치한다
+- m4a는 `imageio-ffmpeg`에 들어 있는 ffmpeg로 읽는다. 이미지에서 `/usr/local/bin/ffmpeg`로 연결
+- 모델 인스턴스 하나를 여러 스레드가 동시에 써도 되는지 검증되지 않았다. 모사 판정 SQS 트리거의 배치가 1개라서 한 실행 환경에서 판정이 겹치지 않는다
+- 기준음성 특징과 세트는 캐시하지 않는다. 같은 단어를 반복 판정할 때 `prepare_set` 캐시를 검토한다
+- 확인 기록(2026-10-16)
+  - macOS arm64: 공개 앵무 소리 샘플 5건에서 앱 판정 결과와 모델의 `MimicryJudge.judge_audio` 결과가 같음. m4a 기준음성 포함
+  - Lambda 이미지(Linux arm64, CPU torch): 같은 5건의 결과가 macOS와 소수점까지 같음. 네트워크 차단, 읽기 전용 파일 시스템에서 실행
+  - 초기화: 2 CPU, 메모리 4 GB 컨테이너에서 handler 모듈 로드 2.9초, 최대 메모리 1.06 GB
+  - 첫 판정은 numba 컴파일로 약 2.7초, 이후 단어 하나에 0.1~1초
+
 ### 모델 버전 올리기
 
 HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 고정 후 PR로 교체한다.
 
-1. `app/parrot_gate.py` 수정
-   - `_GATE_REVISION`: 새 태그
+1. `app/parrot_sound/download.py` 수정
+   - `GATE_REVISION`: 새 태그
    - 빌드 스크립트의 판정 파일명: 새 태그의 파일명
    - 빌드 스크립트의 Perch 커밋: 새 태그 `model_manifest.json`에 기록된 Perch 커밋
 2. `make local ENV_FILE=.env.dev`로 이미지 빌드와 요청 처리 확인
@@ -255,10 +343,13 @@ HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 
 
 - 베이스 이미지: `public.ecr.aws/lambda/python:3.12-arm64`
 - 핸들러: `app.handler.handler`
-- 빌드 단계: uv로 런타임 의존성과 빌드 전용 그룹(`huggingface-hub`, `onnx`)을 설치하고 모델을 받아 가공. 런타임 의존성은 `uv export --frozen --no-dev`와 `uv pip install --target`으로 따로 설치
-- 최종 이미지: 런타임 패키지, `app/`, `pyproject.toml`, 가공한 모델 2개. uv, uv 캐시, HuggingFace 캐시, 원본 Perch, onnx는 들어가지 않음
-- 크기(2026-10-06): 압축 351 MB, 압축을 푼 레이어 합계 약 1.02 GB. 이전 ECS 워커 이미지는 압축 822 MB
-- 초기화: 모듈을 불러올 때 모델을 한 번 올림. RIE에서 0.6~0.9초
+- 빌드 단계
+  - `requirements`: `uv export`로 런타임 의존성(`mimic` 그룹 포함)과 빌드 전용 그룹(`huggingface-hub`, `onnx`)의 requirements 파일을 만든다. 결과에 프로젝트 버전이 들어가지 않아, 릴리스로 버전만 바뀌면 다음 단계는 캐시를 그대로 쓴다
+  - `packages`: 런타임 의존성을 `uv pip install --target`으로 설치
+  - `models`: 빌드 전용 그룹을 설치하고 `app/parrot_sound/download.py`, `app/mimic/download.py`를 실행해 모델을 받는다. 판정 코드를 고쳐도 모델을 다시 받지 않는다
+- 최종 이미지: 런타임 패키지, `app/`, `pyproject.toml`, 앵무 소리 판정 모델 2개, 단어 모사 판정 모델 2개. uv, uv 캐시, HuggingFace 캐시, 원본 Perch, onnx는 들어가지 않음
+- 크기(2026-10-18): 압축 1.35 GB, 압축을 푼 레이어 합계 약 3.09 GB. 모델 파일 842 MB, torch 596 MB
+- 초기화: 모듈을 불러올 때 모델을 한 번 올림. RIE에서 2.4초
 - `onnxruntime`을 import할 때 `blkid`, `hostname` 명령을 찾지 못했다는 줄을 stderr에 남긴다. 베이스 이미지에 두 명령이 없어서 생기며, 190개 소리 비교에서 결과에 영향이 없었다.
 
 ### ECR 이미지 배포
@@ -328,7 +419,7 @@ uv run --frozen mypy
 uv run --frozen pytest
 ```
 
-특정 테스트만 실행하려면 `make test ARGS="tests/test_calls.py -q"`를 사용한다.
+특정 테스트만 실행하려면 `make test ARGS="tests/parrot_sound/test_calls.py -q"`를 사용한다.
 
 ## 브랜치
 

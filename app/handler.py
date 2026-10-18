@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import tomllib
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,8 +12,11 @@ import boto3
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
-from app.parrot_gate import ParrotGate
-from app.sound_analyzer import analyze
+from app.mimic import analyzer as mimic_analyzer
+from app.mimic.download import MIMIC_VERSION
+from app.mimic.judgment import MimicJudgment
+from app.parrot_sound import analyzer as parrot_sound_analyzer
+from app.parrot_sound.gate import ParrotGate
 
 logger = logging.getLogger(__name__)
 logging.getLogger().setLevel(os.getenv("LOG_LEVEL", "INFO"))
@@ -34,7 +38,83 @@ sentry_sdk.init(
 )
 
 _gate = ParrotGate()
+_mimic = MimicJudgment()
 _sqs = boto3.client("sqs", endpoint_url=os.getenv("SQS_ENDPOINT_URL") or None)
+
+
+async def detect_parrot(
+    body: dict[str, Any], semaphore: asyncio.Semaphore
+) -> dict[str, Any]:
+    [sound] = body["data"]
+
+    async with semaphore:
+        sound_result = await asyncio.to_thread(
+            parrot_sound_analyzer.analyze, _gate, sound["audio_id"], sound["object_key"]
+        )
+
+    result = {
+        "audio_id": sound["audio_id"],
+        "is_parrot": sound_result.is_parrot,
+        "score": sound_result.score,
+        "call_count": sound_result.call_count,
+        "chirp_count": sound_result.chirp_count,
+    }
+    sentry_sdk.update_current_span(attributes=result)
+    logger.info(
+        "판정 결과; audio_id=%(audio_id)s is_parrot=%(is_parrot)s"
+        " score=%(score).4f call_count=%(call_count)s"
+        " chirp_count=%(chirp_count)s",
+        result,
+    )
+
+    return {
+        "type": "audio.parrot_detected",
+        "session_id": body["session_id"],
+        "analyzer_version": _analyzer_version,
+        "analyzed_at": datetime.now(UTC).isoformat(),
+        "data": [result],
+    }
+
+
+async def judge_mimic(
+    body: dict[str, Any], semaphore: asyncio.Semaphore
+) -> dict[str, Any]:
+    target = body["target"]
+    reference = body["reference"]
+
+    async with semaphore:
+        mimic_result = await asyncio.to_thread(
+            mimic_analyzer.analyze,
+            _mimic,
+            target_object_key=target["object_key"],
+            word_name=reference["word_name"],
+            reference_object_keys=reference["object_keys"],
+        )
+
+    judgment = asdict(mimic_result)
+    attributes = {
+        "audio_id": target["audio_id"],
+        "word_id": reference["word_id"],
+        **judgment,
+    }
+
+    sentry_sdk.update_current_span(attributes=attributes)
+    logger.info(
+        "모사 판정 결과; audio_id=%(audio_id)s word_id=%(word_id)s"
+        " status=%(status)s is_success=%(is_success)s score=%(score)s"
+        " n_own=%(n_own)s n_fill=%(n_fill)s set_size=%(set_size)s",
+        attributes,
+    )
+
+    return {
+        "type": "audio.mimic_judged",
+        "session_id": body["session_id"],
+        "model_version": MIMIC_VERSION,
+        "analyzed_at": datetime.now(UTC).isoformat(),
+        "target": {"audio_id": target["audio_id"]},
+        "reference": {"word_id": reference["word_id"]},
+        "judgment": judgment,
+    }
 
 
 async def process_record(record: dict[str, Any], semaphore: asyncio.Semaphore) -> None:
@@ -51,35 +131,11 @@ async def process_record(record: dict[str, Any], semaphore: asyncio.Semaphore) -
         with sentry_sdk.start_transaction(transaction):
             try:
                 body = json.loads(record["body"])
-                [sound] = body["data"]
+                if body.get("type") == "audio.judge_mimic":
+                    result_message = await judge_mimic(body, semaphore)
+                else:
+                    result_message = await detect_parrot(body, semaphore)
 
-                async with semaphore:
-                    sound_result = await asyncio.to_thread(
-                        analyze, _gate, sound["audio_id"], sound["object_key"]
-                    )
-
-                result = {
-                    "audio_id": sound["audio_id"],
-                    "is_parrot": sound_result.is_parrot,
-                    "score": sound_result.score,
-                    "call_count": sound_result.call_count,
-                    "chirp_count": sound_result.chirp_count,
-                }
-                sentry_sdk.update_current_span(attributes=result)
-                logger.info(
-                    "판정 결과; audio_id=%(audio_id)s is_parrot=%(is_parrot)s"
-                    " score=%(score).4f call_count=%(call_count)s"
-                    " chirp_count=%(chirp_count)s",
-                    result,
-                )
-
-                result_message = {
-                    "type": "audio.parrot_detected",
-                    "session_id": body["session_id"],
-                    "analyzer_version": _analyzer_version,
-                    "analyzed_at": datetime.now(UTC).isoformat(),
-                    "data": [result],
-                }
                 trace_headers = {
                     "sentry-trace": sentry_sdk.get_traceparent(),
                     "baggage": sentry_sdk.get_baggage(),
@@ -119,5 +175,4 @@ def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     try:
         return asyncio.run(process_batch(event["Records"]))
     finally:
-        # Lambda 정지 전 Sentry 전송
         sentry_sdk.flush()

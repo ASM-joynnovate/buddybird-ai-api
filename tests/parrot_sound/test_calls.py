@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from app.calls import count_chirps, detect_calls
+from app.parrot_sound.calls import count_chirps, detect_calls
 
 SAMPLE_RATE = 16000
 
