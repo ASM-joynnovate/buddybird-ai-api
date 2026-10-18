@@ -23,6 +23,7 @@ HTTP나 gRPC로 요청을 받지 않는다.
 | `app/parrot_detection/model.py` | 앵무새 소리 판별 모델 |
 | `app/parrot_detection/loudness.py` | `maxwin_db`, `is_too_quiet`: 음량 게이트 |
 | `app/parrot_detection/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
+| `app/parrot_detection/config.py` | 앵무새 소리 판별 이미지의 환경 변수 읽기 |
 | `app/mimic_judgment/handler.py` | 모사 판정 Lambda handler. 모델을 올리고 결과 메시지를 생성 |
 | `app/mimic_judgment/judgment.py` | 모사 판정 모델 로드. 판정할 소리와 기준음성을 S3에서 받아 판정 |
 | `app/mimic_judgment/config.py` | 모사 판정 이미지의 환경 변수 읽기 |
@@ -237,7 +238,7 @@ PYTHON
 {
   "type": "audio.parrot_detected",
   "session_id": "0199…",
-  "analyzer_version": "buddybird-audio-ai@0.1.0",
+  "model_version": "parrot-sound-gate@v2.0.0",
   "analyzed_at": "2026-10-06T14:45:32.153710+00:00",
   "data": [
     {"audio_id": "0199…", "is_parrot": true, "score": 0.93, "call_count": 11, "chirp_count": 4}
@@ -246,12 +247,12 @@ PYTHON
 ```
 
 - 메시지 하나에 요청과 같은 소리 하나를 담는다
-- `analyzer_version`: `pyproject.toml`의 `name@version`. buddybird-api는 같은 소리와 같은 `analyzer_version`의 결과를 다시 받으면 무시한다
+- `model_version`: 이미지를 빌드할 때 정한 앵무새 소리 판별 모델 버전
 - `analyzed_at`: 결과를 만든 UTC 시각, ISO 8601, 시간대 포함
 - `score`: 앵무새 소리 판별 확률. `is_parrot`이 false면 `call_count`와 `chirp_count`는 0
 - `call_count`: 울음 전체 수, 음역대 무관
 - `chirp_count`: 짹 수
-- 같은 요청을 다시 처리하면 `analyzed_at`만 다른 같은 결과를 발행하고, buddybird-api가 같은 `analyzer_version` 결과를 무시한다
+- 같은 요청을 다시 처리하면 `analyzed_at`만 다른 같은 결과를 발행한다
 
 ### 앵무새 소리 판별 Lambda 설정
 
@@ -276,7 +277,7 @@ PYTHON
 - 이미지를 빌드할 때 판별 모델 tag의 `model_manifest.json`을 받아, 판별 모델 파일 이름과 Perch 저장소, 파일, 커밋을 읽는다. 판별 모델이 학습에 사용한 Perch만 받도록 Perch 커밋은 따로 정하지 않는다.
 - 두 모델을 `/var/task/models`에 넣고, Perch는 `embedding` 출력만 남겨 45 MB로 줄인다.
 - 실행 중 HuggingFace 접속: 없음. 이미지에는 huggingface-hub가 없음
-- 모델을 올리면 `앵무새 소리 판별 모델 로드 완료; version=<모델 파일의 meta.version> threshold=<값>`을 INFO 로그로 남긴다.
+- 모델을 올리면 `앵무새 소리 판별 모델 로드 완료; version=<model_version> threshold=<값>`을 INFO 로그로 남긴다.
 - scikit-learn은 판별 모델을 저장한 버전인 1.9.0으로 고정한다. 다른 버전이면 모델을 불러올 때 `InconsistentVersionWarning`을 남긴다.
 - `onnxruntime`을 import할 때 `blkid`, `hostname` 명령을 찾지 못했다는 줄을 stderr에 남긴다. base 이미지에 두 명령이 없어서 생기며, 190개 소리 비교에서 결과에 영향이 없었다.
 - HuggingFace 업로드 절차: parrot-mimicry `docs/ops/huggingface.md`
@@ -371,7 +372,8 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 
 | build arg | 대상 | 실행 중 읽는 곳 |
 | --- | --- | --- |
-| `PARROT_DETECTION_MODEL_TAG` | 앵무새 소리 판별 모델 tag. Perch는 이 tag의 manifest를 따름 | 없음. 로드 로그에 모델 파일의 `meta.version` 사용 |
+| `PARROT_DETECTION_MODEL_TAG` | 앵무새 소리 판별 모델 tag. Perch는 이 tag의 manifest를 따름 | 없음 |
+| `PARROT_DETECTION_MODEL_VERSION` | 앵무새 소리 판별 결과의 `model_version` 값 | 이미지 `ENV`, `app/parrot_detection/config.py` |
 | `MIMIC_JUDGMENT_MODEL_REVISION` | 모사 판정 모델 커밋, 40자 | 없음 |
 | `MIMIC_JUDGMENT_MODEL_VERSION` | 모사 판정 결과의 `model_version` 값 | 이미지 `ENV`, `app/mimic_judgment/config.py` |
 
@@ -383,7 +385,7 @@ HuggingFace에 새 버전이 올라와도 자동으로 반영하지 않는다.
 2. `make local FUNCTION=<함수> ENV_FILE=.env.dev`로 이미지 빌드와 요청 처리 확인
 3. `make check`, `make test` 통과 확인
 4. 이 README의 모델 표를 갱신하고 PR 생성, `dev` merge
-5. release PR을 merge하면 deploy 워크플로가 새 이미지를 dev Lambda에 반영. 프로젝트 버전이 오르므로 앵무새 소리 판별 결과의 `analyzer_version`도 바뀜
+5. release PR을 merge하면 deploy 워크플로가 새 이미지를 dev Lambda에 반영
 
 기본값을 고치기 전에 다른 버전을 시험하려면 build arg를 넘겨 빌드한다.
 

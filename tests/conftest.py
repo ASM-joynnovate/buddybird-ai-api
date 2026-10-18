@@ -9,6 +9,7 @@ os.environ.update(
     S3_BUCKET="bucket",
     SQS_JUDGMENT_RESULT_QUEUE_URL="http://sqs/result",
     MIMIC_JUDGMENT_MODEL_VERSION="parrot-mimicry-judgment@v1.0.0",
+    PARROT_DETECTION_MODEL_VERSION="parrot-sound-gate@v2.0.0",
 )
 
 

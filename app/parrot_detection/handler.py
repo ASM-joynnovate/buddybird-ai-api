@@ -6,6 +6,7 @@ from typing import Any
 import sentry_sdk
 
 from app import config, sentry, sqs
+from app.parrot_detection.config import MODEL_VERSION
 from app.parrot_detection.detection import detect
 from app.parrot_detection.model import ParrotDetectionModel
 
@@ -34,7 +35,7 @@ def detect_parrot(body: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "audio.parrot_detected",
         "session_id": body["session_id"],
-        "analyzer_version": config.RELEASE,
+        "model_version": MODEL_VERSION,
         "analyzed_at": datetime.now(UTC).isoformat(),
         "data": [result],
     }

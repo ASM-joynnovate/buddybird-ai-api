@@ -42,3 +42,5 @@ def test_failed_sound_is_reported_and_others_are_published(
         ("s1", 4),
         ("s3", 0),
     ]
+    assert {body["model_version"] for body in results} == {"parrot-sound-gate@v2.0.0"}
+    assert all("analyzer_version" not in body for body in results)

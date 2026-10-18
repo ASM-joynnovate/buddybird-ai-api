@@ -1,0 +1,3 @@
+import os
+
+MODEL_VERSION = os.environ["PARROT_DETECTION_MODEL_VERSION"]

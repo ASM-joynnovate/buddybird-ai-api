@@ -5,6 +5,8 @@ import numpy as np
 import onnxruntime as ort
 import soxr
 
+from app.parrot_detection.config import MODEL_VERSION
+
 logger = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 32_000
@@ -16,9 +18,7 @@ class ParrotDetectionModel:
         self._session = ort.InferenceSession("/var/task/models/perch_embedding.onnx")
 
         logger.info(
-            "앵무새 소리 판별 모델 로드 완료; version=%s threshold=%.4f",
-            self._bundle["meta"]["version"],
-            self._bundle["threshold"],
+            "앵무새 소리 판별 모델 로드 완료; version=%s threshold=%.4f", MODEL_VERSION, self._bundle["threshold"]
         )
 
     def predict(self, audio: np.ndarray, sample_rate: int) -> tuple[float, bool]:

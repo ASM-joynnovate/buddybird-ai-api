@@ -3,6 +3,7 @@ ARG LAMBDA_BASE_IMAGE=public.ecr.aws/lambda/python:3.12-arm64@sha256:9672c8fa29a
 
 # 앵무새 소리 판별 모델 버전
 ARG PARROT_DETECTION_MODEL_TAG=v2.0.0
+ARG PARROT_DETECTION_MODEL_VERSION=parrot-sound-gate@v2.0.0
 
 # 모사 판정 모델 버전
 ARG MIMIC_JUDGMENT_MODEL_REVISION=b1ba78905267833282c3aceaeb9f0ec02f26f386
@@ -53,6 +54,10 @@ FROM ${LAMBDA_BASE_IMAGE} AS parrot-detection
 
 COPY --from=parrot-detection-packages /opt/packages ${LAMBDA_TASK_ROOT}
 COPY --from=parrot-detection-model /var/task/models ${LAMBDA_TASK_ROOT}/models
+
+# 결과 메시지의 model_version
+ARG PARROT_DETECTION_MODEL_VERSION
+ENV PARROT_DETECTION_MODEL_VERSION=${PARROT_DETECTION_MODEL_VERSION}
 
 COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
 COPY app ${LAMBDA_TASK_ROOT}/app
