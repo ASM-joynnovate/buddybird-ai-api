@@ -15,10 +15,16 @@ concurrency: deploy-${{ github.ref_name }}
 jobs:
   deploy:
     runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        function:
+          - parrot-detection
+          - mimic-judgment
     env:
-      ECR_REPOSITORY: jn-buddybird-audio-ai
+      ECR_REPOSITORY: jn-buddybird-${{ matrix.function }}
       ENVIRONMENT: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
-      FUNCTION_NAME: jn-buddybird-audio-ai-${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      FUNCTION_NAME: jn-buddybird-${{ matrix.function }}-${{ github.ref_name == 'main' && 'prod' || 'dev' }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: checkout
@@ -83,12 +89,13 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          target: ${{ matrix.function }}
           platforms: linux/arm64
           push: true
           tags: ${{ steps.image.outputs.uri }}
           provenance: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.function }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.function }}
 
       - name: update function code
         id: deploy

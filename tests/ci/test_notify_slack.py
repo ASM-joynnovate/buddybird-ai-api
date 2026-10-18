@@ -36,17 +36,16 @@ AUTHOR_AT_LIMIT = 3000 - len("*커밋*\n" + ROW_PREFIX + ")")
         "3001",
     ],
 )
-def test_slack_commit_section_limit(
-    count: int, subject: str, author: str, truncated: bool
-) -> None:
-    action = (
-        Path(__file__).parents[2] / ".github/actions/notify-slack/action.yml"
-    ).read_text()
+def test_slack_commit_section_limit(count: int, subject: str, author: str, truncated: bool) -> None:
+    action = (Path(__file__).parents[2] / ".github/actions/notify-slack/action.yml").read_text()
     script = textwrap.dedent(action.split("      run: |\n", 1)[1])
+
     # Execute the real action while replacing git input and webhook delivery.
     script = 'git() { printf "%s" "$TEST_GIT_LOG"; }\ncurl() { cat; }\n' + script
     bash = shutil.which("bash")
+
     assert bash is not None
+
     result = subprocess.run(  # noqa: S603
         [bash, "-e", "-o", "pipefail", "-c", script],
         env={
@@ -63,17 +62,20 @@ def test_slack_commit_section_limit(
         text=True,
         check=True,
     )
+
     blocks = json.loads(result.stdout)["blocks"]
-    sections = [
-        b["text"]["text"] for b in blocks if "text" in b and b["type"] == "section"
-    ]
+    sections = [b["text"]["text"] for b in blocks if "text" in b and b["type"] == "section"]
+
     if count == 0:
         assert sections == []
+
         return
 
     [commits] = sections
+
     assert len(commits) <= 3000
     assert ("이하 생략" in commits) == truncated
+
     if truncated:
         assert f"<{REPO}/compare/before...after|전체 변경 내역>" in commits
     else:
@@ -82,10 +84,10 @@ def test_slack_commit_section_limit(
     def escape(value: str) -> str:
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    expected_row = (
-        f"• <{REPO}/commit/{SHA}|{SHA[:7]}> {escape(subject[:80])} ({escape(author)})"
-    )
+    expected_row = f"• <{REPO}/commit/{SHA}|{SHA[:7]}> {escape(subject[:80])} ({escape(author)})"
     rows = [line for line in commits.splitlines() if line.startswith("• ")]
+
     assert all(row == expected_row for row in rows)
+
     if count > 1:
         assert rows

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from app.parrot_sound.loudness import TOO_QUIET_DBFS, is_too_quiet, maxwin_db
+from app.parrot_detection.loudness import TOO_QUIET_DBFS, is_too_quiet, maxwin_db
 
 
 def reference_maxwin_db(audio: np.ndarray, sr: int) -> float:
@@ -10,14 +10,15 @@ def reference_maxwin_db(audio: np.ndarray, sr: int) -> float:
 
     if audio.size == 0:
         return rms_to_db(0.0)
+
     win = max(1, round(sr * 100.0 / 1000.0))
     hop = max(1, round(sr * 100.0 / 1000.0))
+
     if audio.size <= win:
         return rms_to_db(float(np.sqrt(np.mean(audio**2))))
-    best = max(
-        float(np.sqrt(np.mean(audio[s : s + win] ** 2)))
-        for s in range(0, audio.size - win + 1, hop)
-    )
+
+    best = max(float(np.sqrt(np.mean(audio[s : s + win] ** 2))) for s in range(0, audio.size - win + 1, hop))
+
     return rms_to_db(best)
 
 
@@ -48,9 +49,6 @@ def test_empty_audio_is_too_quiet() -> None:
     assert is_too_quiet(maxwin_db(np.array([]), 16000))
 
 
-@pytest.mark.parametrize(
-    ("db", "expected"),
-    [(TOO_QUIET_DBFS, False), (-38.99, False), (-39.01, True)],
-)
+@pytest.mark.parametrize(("db", "expected"), [(TOO_QUIET_DBFS, False), (-38.99, False), (-39.01, True)])
 def test_threshold_boundary_passes(db: float, expected: bool) -> None:
     assert is_too_quiet(db) is expected
