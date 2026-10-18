@@ -2,7 +2,7 @@
 ARG LAMBDA_BASE_IMAGE=public.ecr.aws/lambda/python:3.12-arm64@sha256:9672c8fa29ab0fc33c5b2b22ffe91e99c075d6fc67cc606fcd702a8adee3c5a8
 
 # 앵무새 소리 판별 모델 버전
-ARG PARROT_DETECTION_MODEL_TAG=v2.0.0
+ARG PARROT_DETECTION_MODEL_REVISION=1682b03ba43a436524ea83b74447b5b6ddd35f70
 ARG PARROT_DETECTION_MODEL_VERSION=parrot-sound-gate@v2.0.0
 
 # 모사 판정 모델 버전
@@ -44,7 +44,7 @@ RUN uv pip install --target /opt/packages -r parrot-detection.txt
 # 앵무새 소리 판별 모델 다운로드
 FROM model-download AS parrot-detection-model
 
-ARG PARROT_DETECTION_MODEL_TAG
+ARG PARROT_DETECTION_MODEL_REVISION
 
 COPY scripts/download_parrot_detection_model.py ./
 RUN python download_parrot_detection_model.py

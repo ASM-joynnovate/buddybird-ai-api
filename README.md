@@ -271,11 +271,12 @@ PYTHON
 
 | 모델 | HuggingFace 저장소 | 버전 | 파일 |
 | --- | --- | --- | --- |
-| 판별 | `buddybird-ai/parrot-sound-gate` | `v2.0.0` | `gate-2.0.0.joblib` |
+| 판별 | `buddybird-ai/parrot-sound-gate` | `v2.0.0`, 커밋 `1682b03` | `gate-2.0.0.joblib` |
 | 임베딩 | `justinchuby/Perch-onnx` | 커밋 `da88bf8` | `perch_v2.onnx`, 409 MB |
 
-- 이미지를 빌드할 때 판별 모델 tag의 `model_manifest.json`을 받아, 판별 모델 파일 이름과 Perch 저장소, 파일, 커밋을 읽는다. 판별 모델이 학습에 사용한 Perch만 받도록 Perch 커밋은 따로 정하지 않는다.
+- 이미지를 빌드할 때 판별 모델 커밋의 `model_manifest.json`을 받아, 판별 모델 파일 이름과 Perch 저장소, 파일, 커밋을 읽는다. 판별 모델이 학습에 사용한 Perch만 받도록 Perch 커밋은 따로 정하지 않는다.
 - 두 모델을 `/var/task/models`에 넣고, Perch는 `embedding` 출력만 남겨 45 MB로 줄인다.
+- 판별 모델 파일은 manifest `model.sha256`, 원본 Perch 파일은 manifest `perch.sha256`과 대조하고, 다르면 빌드가 실패한다.
 - 실행 중 HuggingFace 접속: 없음. 이미지에는 huggingface-hub가 없음
 - 모델을 올리면 `앵무새 소리 판별 모델 로드 완료; version=<model_version> threshold=<값>`을 INFO 로그로 남긴다.
 - scikit-learn은 판별 모델을 저장한 버전인 1.9.0으로 고정한다. 다른 버전이면 모델을 불러올 때 `InconsistentVersionWarning`을 남긴다.
@@ -372,7 +373,7 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 
 | build arg | 대상 | 실행 중 읽는 곳 |
 | --- | --- | --- |
-| `PARROT_DETECTION_MODEL_TAG` | 앵무새 소리 판별 모델 tag. Perch는 이 tag의 manifest를 따름 | 없음 |
+| `PARROT_DETECTION_MODEL_REVISION` | 앵무새 소리 판별 모델 커밋, 40자. Perch는 이 커밋의 manifest를 따름 | 없음 |
 | `PARROT_DETECTION_MODEL_VERSION` | 앵무새 소리 판별 결과의 `model_version` 값 | 이미지 `ENV`, `app/parrot_detection/config.py` |
 | `MIMIC_JUDGMENT_MODEL_REVISION` | 모사 판정 모델 커밋, 40자 | 없음 |
 | `MIMIC_JUDGMENT_MODEL_VERSION` | 모사 판정 결과의 `model_version` 값 | 이미지 `ENV`, `app/mimic_judgment/config.py` |
@@ -380,6 +381,10 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 모델 build arg는 그 값을 사용하는 stage에서만 선언한다.
 그래서 모델 하나의 버전을 바꾸면 그 모델만 다시 받고, 다른 이미지와 의존성 설치는 cache를 그대로 사용한다.
 HuggingFace에 새 버전이 올라와도 자동으로 반영하지 않는다.
+
+`*_MODEL_REVISION`에는 tag가 가리키는 커밋 40자를 넣는다.
+HuggingFace tag는 지우고 같은 이름으로 다른 커밋에 다시 만들 수 있고, Docker 빌드 cache는 build arg 문자열이 같으면 모델을 다시 받지 않는다.
+tag의 커밋은 `curl -s https://huggingface.co/api/models/<저장소>/revision/<tag>`가 돌려주는 `sha`다.
 
 1. Dockerfile의 build arg 기본값 수정
 2. `make local FUNCTION=<함수> ENV_FILE=.env.dev`로 이미지 빌드와 요청 처리 확인
