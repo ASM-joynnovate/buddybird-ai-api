@@ -13,7 +13,8 @@ import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 from app.mimic import analyzer as mimic_analyzer
-from app.mimic.judgment import MODEL_VERSION, MimicJudgment
+from app.mimic.download import MIMIC_VERSION
+from app.mimic.judgment import MimicJudgment
 from app.parrot_sound import analyzer as parrot_sound_analyzer
 from app.parrot_sound.gate import ParrotGate
 
@@ -115,7 +116,7 @@ async def judge_mimic(
         "type": "audio.mimic_judged",
         "session_id": body["session_id"],
         "analyzer_version": _analyzer_version,
-        "model_version": MODEL_VERSION,
+        "model_version": MIMIC_VERSION,
         "analyzed_at": datetime.now(UTC).isoformat(),
         "data": [{"audio_id": sound["audio_id"], "judgments": judgments}],
     }

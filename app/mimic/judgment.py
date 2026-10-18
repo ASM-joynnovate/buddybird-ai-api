@@ -5,12 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from app.mimic.download import CONTENTVEC_DIR, MIMIC_DIR, MIMIC_REVISION
 
-_MIMIC_REVISION = "b1ba78905267833282c3aceaeb9f0ec02f26f386"
-_MIMIC_DIR = Path("/var/task/models/mimic")
-_CONTENTVEC_DIR = Path("/var/task/models/contentvec")
-MODEL_VERSION = "parrot-mimicry-judgment@v1.0.0"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -25,13 +22,13 @@ class WordJudgment:
 
 class MimicJudgment:
     def __init__(self) -> None:
-        sys.path.insert(0, str(_MIMIC_DIR))
+        sys.path.insert(0, str(MIMIC_DIR))
         import judge
 
         self._judge: Any = judge
-        self._bundle = judge.load_bundle(_MIMIC_DIR, verify=False)
+        self._bundle = judge.load_bundle(MIMIC_DIR, verify=False)
         self._encoder = judge.ContentVecEncoder(
-            repo_id=str(_CONTENTVEC_DIR),
+            repo_id=str(CONTENTVEC_DIR),
             layer=int(self._bundle.manifest["model"]["layer"]),
             weights_filename=None,
             weights_sha256=None,
@@ -41,7 +38,7 @@ class MimicJudgment:
 
         logger.info(
             "모사 판정 모델 로드 완료; revision=%s threshold=%.4f",
-            _MIMIC_REVISION,
+            MIMIC_REVISION,
             self._bundle.threshold,
         )
 
@@ -76,38 +73,3 @@ class MimicJudgment:
                 judgments.append(WordJudgment(**result))
 
             return judgments
-
-
-if __name__ == "__main__":
-    import hashlib
-    import json
-
-    from huggingface_hub import snapshot_download
-
-    def sha256(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as file:
-            for chunk in iter(lambda: file.read(1 << 20), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
-
-    snapshot_download(
-        "buddybird-ai/parrot-mimicry-judgment",
-        revision=_MIMIC_REVISION,
-        local_dir=_MIMIC_DIR,
-        allow_patterns=["judge/*", "manifest.json", "*.npz", "*.npy"],
-    )
-    manifest = json.loads((_MIMIC_DIR / "manifest.json").read_text())
-    for name, file in manifest["files"].items():
-        if sha256(_MIMIC_DIR / name) != file["sha256"].removeprefix("sha256:"):
-            raise ValueError(f"모사 판정 번들 해시 불일치; file={name}")
-
-    encoder = manifest["encoder"]
-    snapshot_download(
-        encoder["repo_id"],
-        revision=encoder["revision"],
-        local_dir=_CONTENTVEC_DIR,
-        allow_patterns=["config.json", encoder["filename"]],
-    )
-    if sha256(_CONTENTVEC_DIR / encoder["filename"]) != encoder["sha256"]:
-        raise ValueError("ContentVec 가중치 해시 불일치")

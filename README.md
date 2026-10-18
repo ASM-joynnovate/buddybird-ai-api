@@ -10,11 +10,13 @@ HTTP나 gRPC로 요청을 받지 않는다.
 | --- | --- |
 | `app/handler.py` | Lambda 핸들러. 모델 로딩, SQS 배치 처리, 결과 발행 |
 | `app/parrot_sound/analyzer.py` | 소리 하나를 S3에서 읽어 음량 게이트, 앵무 소리 판정, 울음 수 계산 |
-| `app/parrot_sound/gate.py` | 앵무 소리 판정 모델. 이미지 빌드 때 모델을 받아 가공하는 스크립트 포함 |
+| `app/parrot_sound/gate.py` | 앵무 소리 판정 모델 |
+| `app/parrot_sound/download.py` | 앵무 소리 판정 모델의 버전과 파일 경로. 이미지 빌드 때 모델을 받아 가공하는 스크립트 |
 | `app/parrot_sound/loudness.py` | `maxwin_db`, `is_too_quiet`: 앵무 소리 판정 전 음량 게이트 |
 | `app/parrot_sound/calls.py` | `detect_calls`, `count_chirps`: 울음 검출과 짹 수 계산 |
 | `app/mimic/analyzer.py` | 소리와 기준음성을 S3에서 받아 단어마다 모사 판정 |
-| `app/mimic/judgment.py` | 단어 모사 판정 모델. 이미지 빌드 때 모델을 받아 해시를 확인하는 스크립트 포함 |
+| `app/mimic/judgment.py` | 단어 모사 판정 모델 |
+| `app/mimic/download.py` | 단어 모사 판정 모델의 버전과 파일 경로. 이미지 빌드 때 모델을 받아 해시를 확인하는 스크립트 |
 | `tests/test_handler.py` | 요청 type 분기, 결과 메시지, 메시지별 부분 실패 테스트 |
 | `tests/parrot_sound/` | 앵무 소리 분석, 울음 검출, 음량 게이트 테스트 |
 | `tests/mimic/` | 모사 판정 S3 다운로드 테스트 |
@@ -342,8 +344,8 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 
 HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 고정 후 PR로 교체한다.
 
-1. `app/parrot_sound/gate.py` 수정
-   - `_GATE_REVISION`: 새 태그
+1. `app/parrot_sound/download.py` 수정
+   - `GATE_REVISION`: 새 태그
    - 빌드 스크립트의 판정 파일명: 새 태그의 파일명
    - 빌드 스크립트의 Perch 커밋: 새 태그 `model_manifest.json`에 기록된 Perch 커밋
 2. `make local ENV_FILE=.env.dev`로 이미지 빌드와 요청 처리 확인
@@ -355,10 +357,13 @@ HuggingFace에 새 태그가 올라와도 자동 반영하지 않는다. 버전 
 
 - 베이스 이미지: `public.ecr.aws/lambda/python:3.12-arm64`
 - 핸들러: `app.handler.handler`
-- 빌드 단계: uv로 런타임 의존성과 빌드 전용 그룹(`huggingface-hub`, `onnx`)을 설치하고 모델을 받아 가공. 런타임 의존성은 `mimic` 그룹을 포함해 `uv export --frozen --no-dev --group mimic`와 `uv pip install --target`으로 따로 설치
+- 빌드 단계
+  - `requirements`: `uv export`로 런타임 의존성(`mimic` 그룹 포함)과 빌드 전용 그룹(`huggingface-hub`, `onnx`)의 requirements 파일을 만든다. 결과에 프로젝트 버전이 들어가지 않아, 릴리스로 버전만 바뀌면 다음 단계는 캐시를 그대로 쓴다
+  - `packages`: 런타임 의존성을 `uv pip install --target`으로 설치
+  - `models`: 빌드 전용 그룹을 설치하고 `app/parrot_sound/download.py`, `app/mimic/download.py`를 실행해 모델을 받는다. 판정 코드를 고쳐도 모델을 다시 받지 않는다
 - 최종 이미지: 런타임 패키지, `app/`, `pyproject.toml`, 앵무 소리 판정 모델 2개, 단어 모사 판정 모델 2개. uv, uv 캐시, HuggingFace 캐시, 원본 Perch, onnx는 들어가지 않음
-- 크기(2026-10-06): 압축 351 MB, 압축을 푼 레이어 합계 약 1.02 GB. 이전 ECS 워커 이미지는 압축 822 MB
-- 초기화: 모듈을 불러올 때 모델을 한 번 올림. RIE에서 0.6~0.9초
+- 크기(2026-10-18): 압축 1.35 GB, 압축을 푼 레이어 합계 약 3.09 GB. 모델 파일 842 MB, torch 596 MB
+- 초기화: 모듈을 불러올 때 모델을 한 번 올림. RIE에서 2.4초
 - `onnxruntime`을 import할 때 `blkid`, `hostname` 명령을 찾지 못했다는 줄을 stderr에 남긴다. 베이스 이미지에 두 명령이 없어서 생기며, 190개 소리 비교에서 결과에 영향이 없었다.
 
 ### ECR 이미지 배포
