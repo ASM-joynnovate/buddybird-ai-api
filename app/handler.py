@@ -109,7 +109,6 @@ async def judge_mimic(
     return {
         "type": "audio.mimic_judged",
         "session_id": body["session_id"],
-        "analyzer_version": _analyzer_version,
         "model_version": MIMIC_VERSION,
         "analyzed_at": datetime.now(UTC).isoformat(),
         "target": {"audio_id": target["audio_id"]},

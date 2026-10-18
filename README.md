@@ -272,7 +272,6 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 {
   "type": "audio.mimic_judged",
   "session_id": "0199…",
-  "analyzer_version": "buddybird-audio-ai@1.3.0",
   "model_version": "parrot-mimicry-judgment@v1.0.0",
   "analyzed_at": "2026-10-16T05:12:03.481920+00:00",
   "target": {"audio_id": "0199…"},
@@ -294,7 +293,7 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 | --- | --- |
 | 판정 성공 | `status`와 상관없이 결과 발행 |
 | 소리나 기준음성을 읽지 못함, 빈 오디오, 디코딩 실패 | 결과 미발행, 그 메시지를 `batchItemFailures`로 반환 |
-| 실패한 메시지 | 가시성 시간 360초 뒤 다시 처리. 5번 실패하면 SQS가 `mimicry-judgment-dlq`로 옮기고, buddybird-api consumer가 그 소리를 모사가 아닌 것으로 처리 |
+| 실패한 메시지 | 가시성 시간 360초 뒤 다시 처리. 5번 실패하면 SQS가 `mimicry-judgment-dlq`로 옮기고, buddybird-api consumer가 그 소리를 모사 판정 실패로 기록 |
 
 ## 앵무 소리 판정 모델
 
