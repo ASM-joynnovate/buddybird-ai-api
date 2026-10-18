@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.4.0...v1.4.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* 모사 판정 모델 파일을 비 root 사용자가 읽을 수 있게 복사 ([fa44487](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/fa444872c1f248d4b7bac7f6daf688a22eeb9fb2))
+* 모사 판정 모델 파일을 비 root 사용자가 읽을 수 있게 복사 ([0ba95f1](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/0ba95f1dbe00cb82a6c992a755517ba42c0f99a2))
+
 ## [1.4.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.3.0...v1.4.0) (2026-10-18)
 
 
