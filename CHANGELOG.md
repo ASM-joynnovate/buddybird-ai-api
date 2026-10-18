@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.3.0...v1.4.0) (2026-10-18)
+
+
+### Features
+
+* 앵무새 소리 판별 결과에 analyzer_version 대신 model_version 전달 ([353b901](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/353b9011f95e9bf28f32b64440f407627419a55e))
+* 앵무새 소리 판별과 모사 판정을 Lambda 함수와 이미지로 분리 ([70ee4f2](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/70ee4f24d0022a03486025b82d0e6d9edd16e9f4))
+* 앵무새 소리 판별과 모사 판정을 Lambda 함수와 이미지로 분리 ([dad4bf1](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/dad4bf15c9681d48d924aa9fd5aac3d2d9fe5dbe))
+
 ## [1.3.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.2.0...v1.3.0) (2026-10-18)
 
 
