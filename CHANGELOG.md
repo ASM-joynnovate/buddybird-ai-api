@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.2.0...v1.3.0) (2026-10-18)
+
+
+### Features
+
+* **mimic:** 단어 모사 판정 모델 v1.0.0 연동 ([c05f62f](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/c05f62f73102e11921efef9ec93bc988ee82b8e4))
+* **mimic:** 단어 모사 판정 모델 v1.0.0 연동 [BB-694] ([057ae1f](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/057ae1f33b982dce8422661e3e1fdcbe735de7e5))
+
+
+### Bug Fixes
+
+* Slack 배포 알림 커밋 목록 길이 제한 [BB-651] ([#25](https://github.com/ASM-joynnovate/buddybird-ai-api/issues/25)) ([4998dff](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/4998dff9184f9e56b0417d2781d618022582453d))
+
 ## [1.2.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.1.0...v1.2.0) (2026-10-09)
 
 
