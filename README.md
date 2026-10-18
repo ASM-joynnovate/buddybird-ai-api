@@ -88,6 +88,7 @@ curl -XPOST "http://localhost:8080/2015-03-31/functions/function/invocations" -d
 ```
 
 - 환경 변수는 [공통 환경 변수](#공통-환경-변수) 표를 따른다.
+- `make local`은 Lambda 실행 사용자와 같은 비 root 사용자 `993:990`으로 컨테이너를 실행한다. 이미지 안의 파일을 root만 읽을 수 있으면 로컬에서도 init이 실패한다.
 - `make local`은 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`을 컨테이너에 그대로 넘기고 `~/.aws`를 마운트하지 않는다. SSO 프로필은 토큰을 갱신하면서 `~/.aws/sso/cache`에 파일을 저장하므로, 읽기 전용으로 마운트하면 S3 읽기가 모두 실패한다.
 - 결과는 로컬 elasticmq로 보낸다. 실제 dev 결과 큐로 보내면 dev consumer가 그 결과를 dev DB에 저장한다.
 - 종료: `Ctrl+C`
@@ -100,7 +101,7 @@ docker run --rm -p 9324:9324 softwaremill/elasticmq-native
 aws --endpoint-url http://localhost:9324 --region ap-northeast-2 sqs create-queue --queue-name judgment-result
 ```
 
-컨테이너 안에서는 호스트를 `host.docker.internal`로 부르므로 `.env.dev`에 다음처럼 적는다.
+컨테이너 안에서는 호스트를 `host.docker.internal`로 부르므로 `.env.dev`에 다음 값을 적는다.
 
 ```sh
 SQS_ENDPOINT_URL=http://host.docker.internal:9324
