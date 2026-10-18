@@ -8,12 +8,14 @@ setup:
 test:
 	uv run pytest $(ARGS)
 
-# 환경 변수 파일. 예: make local ENV_FILE=.env.dev
+# 실행할 함수와 환경 변수 파일. 예: make local FUNCTION=mimic-judgment ENV_FILE=.env.dev
+FUNCTION ?= parrot-detection
 ENV_FILE ?= .env
 
+# Lambda 실행 사용자와 같은 비 root 사용자로 실행
 local:
-	docker build -t buddybird-audio-ai:local .
-	docker run --rm -p 8080:8080 $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE)) -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN buddybird-audio-ai:local
+	docker build --target $(FUNCTION) -t buddybird-audio-ai:$(FUNCTION) .
+	docker run --rm -p 8080:8080 --user 993:990 $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE)) -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN buddybird-audio-ai:$(FUNCTION)
 
 check:
 	uv run ruff check --fix

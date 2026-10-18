@@ -16,23 +16,23 @@ def detect_calls(
     frame_starts = np.arange(0, audio.size, frame_samples)
     frame_sizes = np.minimum(frame_samples, audio.size - frame_starts)
     energies = np.add.reduceat(audio * audio, frame_starts)
+
     with np.errstate(divide="ignore"):
         rms_dbfs = 10 * np.log10(energies / frame_sizes)
 
     active_frames = np.flatnonzero(rms_dbfs >= -39.0)
+
     if active_frames.size == 0:
         return []
 
     # max_silence_ms 이하 무음은 한 울음으로 연결
-    gap_lengths = frame_starts[active_frames[1:]] - (
-        frame_starts[active_frames[:-1]] + frame_sizes[active_frames[:-1]]
-    )
+    gap_lengths = frame_starts[active_frames[1:]] - (frame_starts[active_frames[:-1]] + frame_sizes[active_frames[:-1]])
     call_frame_ids = np.split(
         active_frames,
         np.flatnonzero(gap_lengths > round(sample_rate * max_silence_ms / 1000)) + 1,
     )
-
     min_call_samples = round(sample_rate * 30.0 / 1000)
+
     return [
         (
             int(frame_starts[frame_ids[0]]),
@@ -43,16 +43,16 @@ def detect_calls(
     ]
 
 
-def count_chirps(
-    audio: NDArray[np.float64], sample_rate: int, calls: list[tuple[int, int]]
-) -> int:
+def count_chirps(audio: NDArray[np.float64], sample_rate: int, calls: list[tuple[int, int]]) -> int:
     hann_window = np.hanning(1024)
     frequencies = np.fft.rfftfreq(1024, 1 / sample_rate)
     search_band = (frequencies >= 250.0) & (frequencies <= 8000.0)
 
     chirp_count = 0
+
     for start, end in calls:
         segment = audio[start:end]
+
         if segment.size < 1024:
             segment = np.pad(segment, (0, 1024 - segment.size))
 
@@ -63,6 +63,7 @@ def count_chirps(
         power_spectrum = window_powers.sum(axis=0)
 
         peak_frequency = frequencies[search_band][power_spectrum[search_band].argmax()]
+
         if peak_frequency >= 4600.0:
             chirp_count += 1
 

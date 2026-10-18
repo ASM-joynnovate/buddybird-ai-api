@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.4.1](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.4.0...v1.4.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* 모사 판정 모델 파일을 비 root 사용자가 읽을 수 있게 복사 ([fa44487](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/fa444872c1f248d4b7bac7f6daf688a22eeb9fb2))
+* 모사 판정 모델 파일을 비 root 사용자가 읽을 수 있게 복사 ([0ba95f1](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/0ba95f1dbe00cb82a6c992a755517ba42c0f99a2))
+
+## [1.4.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.3.0...v1.4.0) (2026-10-18)
+
+
+### Features
+
+* 앵무새 소리 판별 결과에 analyzer_version 대신 model_version 전달 ([353b901](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/353b9011f95e9bf28f32b64440f407627419a55e))
+* 앵무새 소리 판별과 모사 판정을 Lambda 함수와 이미지로 분리 ([70ee4f2](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/70ee4f24d0022a03486025b82d0e6d9edd16e9f4))
+* 앵무새 소리 판별과 모사 판정을 Lambda 함수와 이미지로 분리 ([dad4bf1](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/dad4bf15c9681d48d924aa9fd5aac3d2d9fe5dbe))
+
+## [1.3.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.2.0...v1.3.0) (2026-10-18)
+
+
+### Features
+
+* **mimic:** 단어 모사 판정 모델 v1.0.0 연동 ([c05f62f](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/c05f62f73102e11921efef9ec93bc988ee82b8e4))
+* **mimic:** 단어 모사 판정 모델 v1.0.0 연동 [BB-694] ([057ae1f](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/057ae1f33b982dce8422661e3e1fdcbe735de7e5))
+
+
+### Bug Fixes
+
+* Slack 배포 알림 커밋 목록 길이 제한 [BB-651] ([#25](https://github.com/ASM-joynnovate/buddybird-ai-api/issues/25)) ([4998dff](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/4998dff9184f9e56b0417d2781d618022582453d))
+
 ## [1.2.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.1.0...v1.2.0) (2026-10-09)
 
 
