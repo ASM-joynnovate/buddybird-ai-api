@@ -11,6 +11,7 @@ model_dir = Path("/var/task/models/mimic")
 encoder_dir = Path("/var/task/models/contentvec")
 
 with tempfile.TemporaryDirectory() as cache_dir:
+    # cache의 LFS 파일 권한 0400을 복사하지 않음
     shutil.copytree(
         snapshot_download(
             "buddybird-ai/parrot-mimicry-judgment",
@@ -19,6 +20,7 @@ with tempfile.TemporaryDirectory() as cache_dir:
             allow_patterns=["judge/*", "manifest.json", "*.npz", "*.npy"],
         ),
         model_dir,
+        copy_function=shutil.copyfile,
     )
 
     manifest = json.loads((model_dir / "manifest.json").read_text())
@@ -32,6 +34,7 @@ with tempfile.TemporaryDirectory() as cache_dir:
             allow_patterns=["config.json", encoder["filename"]],
         ),
         encoder_dir,
+        copy_function=shutil.copyfile,
     )
 
 for name, file in manifest["files"].items():
