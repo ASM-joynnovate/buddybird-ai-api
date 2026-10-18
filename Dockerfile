@@ -34,7 +34,6 @@ RUN python -m app.mimic.download
 FROM public.ecr.aws/lambda/python:3.12-arm64
 
 ENV HF_HUB_OFFLINE=1 \
-    TRANSFORMERS_OFFLINE=1 \
     NUMBA_CACHE_DIR=/tmp/numba-cache
 
 COPY --from=packages /opt/packages ${LAMBDA_TASK_ROOT}
