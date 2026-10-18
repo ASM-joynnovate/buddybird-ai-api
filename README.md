@@ -336,15 +336,16 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 
 | 설정 | 값 |
 | --- | --- |
-| 메모리, 제한 시간 | 4,096 MB, 120초 |
+| 메모리, 제한 시간 | 4,096 MB, 300초 |
 | SQS 트리거 | `mimicry-judgment` 큐, 배치 1개, `ReportBatchItemFailures`, 최대 동시 실행 10 |
-| 요청 큐 | visibility timeout 720초, 5번 실패하면 `mimicry-judgment-dlq`로 이동 |
+| 요청 큐 | visibility timeout 1,800초, 5번 실패하면 `mimicry-judgment-dlq`로 이동 |
 | 배치 안 동시 판정 | 1개 |
 
 - 소리나 기준음성을 읽지 못하거나, 빈 오디오이거나, 디코딩에 실패하면 결과를 발행하지 않고 그 메시지를 `batchItemFailures`로 돌려준다.
 - 모델 인스턴스 하나를 여러 스레드가 동시에 사용해도 되는지 검증되지 않았다. 그래서 handler가 메시지를 하나씩 처리하고, SQS 트리거의 배치도 1개다.
 - 모델은 init에서 올린다. 1.3.0 dev Lambda에서는 모사 판정 모델 로드에 11~33초가 걸렸다. init이 10초 제한을 넘으면 Lambda는 `INIT_REPORT ... Phase: init Status: timeout`을 남기고 첫 요청 안에서 init을 다시 한다.
-- 제한 시간 120초는 dev에서 관측한 cold start 첫 요청 약 80초(모델 로드 33초, 첫 판정 47초)를 기준으로 정했다. 배포한 뒤 CloudWatch Logs Insights로 `REPORT` 줄의 `@initDuration`, `@duration`, `@maxMemoryUsed`를 확인해 조정한다.
+- 제한 시간 300초는 1.4.1 dev 배포 직후 cold start를 기준으로 정했다. init 단계 10초를 넘긴 뒤 첫 요청 안에서 다시 한 init이 87초, 첫 판정이 27.7초 걸려 114.5초에 끝났고, 같은 시각 다른 실행 환경은 다시 한 init만 120초를 넘겨 요청이 실패했다. 실행 환경이 뜬 뒤 판정은 1.7초다.
+- 제한 시간을 바꾸면 aws-infra에서 `mimicry-judgment` 큐 visibility timeout을 제한 시간의 6배로 함께 바꾼다. 배포한 뒤 CloudWatch Logs Insights로 `REPORT` 줄의 `@initDuration`, `@duration`, `@maxMemoryUsed`를 확인해 조정한다.
 
 ### 모사 판정 모델
 
