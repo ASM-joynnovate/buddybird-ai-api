@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.4.1...v1.5.0) (2026-10-28)
+
+
+### Features
+
+* 판별과 판정 점수를 앱 표시용 점수로 변환 [BB-771] ([cc4f5c1](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/cc4f5c1c49f8f7e085a5b76f8b442d3f274bde36))
+* 판별과 판정 점수를 앱 표시용 점수로 변환 [BB-771] ([b5c4494](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/b5c4494983db92cf4198778e70aa43daa6fe3e38))
+
+
+### Documentation
+
+* 모사 판정 제한 시간을 300초로 변경 ([2fba36f](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/2fba36f1de4d34d8c4b7b4be83247a216cc6856a))
+* 모사 판정 제한 시간을 300초로 변경 ([a16b9fc](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/a16b9fc6d077608c3d9a8e0c513a4cda216ba3b6))
+
 ## [1.4.1](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.4.0...v1.4.1) (2026-10-18)
 
 
