@@ -5,7 +5,7 @@ from typing import Any
 
 import sentry_sdk
 
-from app import config, sentry, sqs
+from app import config, display_score, sentry, sqs
 from app.mimic_judgment.config import MODEL_VERSION
 from app.mimic_judgment.judgment import judge, load_model
 
@@ -31,7 +31,7 @@ def judge_mimic(body: dict[str, Any]) -> dict[str, Any]:
     judgment = {
         "status": result.status,
         "is_success": result.is_success,
-        "score": None if math.isnan(result.percentile) else result.percentile,
+        "score": None if math.isnan(result.percentile) else display_score.mimic(result.percentile),
         "n_own": result.n_own,
         "n_fill": result.n_fill,
         "set_size": result.set_size,

@@ -18,6 +18,7 @@ HTTP나 gRPC로 요청을 받지 않는다.
 | `app/config.py` | 공통 환경 변수와 `pyproject.toml`의 이름, 버전 읽기 |
 | `app/sentry.py` | Sentry 초기화 |
 | `app/sqs.py` | SQS 배치 처리. 메시지마다 Sentry trace를 이어 받아 결과를 발행하고, 실패한 메시지를 `batchItemFailures`로 반환 |
+| `app/display_score.py` | 모델 원점수를 앱 표시용 점수로 변환. 모델이 직접 변환한 점수를 돌려주게 되면 삭제 |
 | `app/parrot_detection/handler.py` | 앵무새 소리 판별 Lambda handler. 모델을 올리고 결과 메시지를 생성 |
 | `app/parrot_detection/detection.py` | 소리 하나를 S3에서 읽어 음량 게이트, 앵무새 소리 판별, 울음 수 계산 |
 | `app/parrot_detection/model.py` | 앵무새 소리 판별 모델 |
@@ -239,7 +240,7 @@ PYTHON
 {
   "type": "audio.parrot_detected",
   "session_id": "0199…",
-  "model_version": "parrot-sound-gate@v2.0.0",
+  "model_version": "parrot-sound-gate@v2.0.1",
   "analyzed_at": "2026-10-06T14:45:32.153710+00:00",
   "data": [
     {"audio_id": "0199…", "is_parrot": true, "score": 0.93, "call_count": 11, "chirp_count": 4}
@@ -250,7 +251,7 @@ PYTHON
 - 메시지 하나에 요청과 같은 소리 하나를 담는다
 - `model_version`: 이미지를 빌드할 때 정한 앵무새 소리 판별 모델 버전
 - `analyzed_at`: 결과를 만든 UTC 시각, ISO 8601, 시간대 포함
-- `score`: 앵무새 소리 판별 확률. `is_parrot`이 false면 `call_count`와 `chirp_count`는 0
+- `score`: 앵무새 소리 판별 확률을 앱 표시용으로 변환한 점수, 0~1. 판별 임계값이 0.6에 대응한다. `is_parrot`이 false면 `call_count`와 `chirp_count`는 0
 - `call_count`: 울음 전체 수, 음역대 무관
 - `chirp_count`: 짹 수
 - 같은 요청을 다시 처리하면 `analyzed_at`만 다른 같은 결과를 발행한다
@@ -316,7 +317,7 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 {
   "type": "audio.mimic_judged",
   "session_id": "0199…",
-  "model_version": "parrot-mimicry-judgment@v1.0.0",
+  "model_version": "parrot-mimicry-judgment@v1.0.1",
   "analyzed_at": "2026-10-16T05:12:03.481920+00:00",
   "target": {"audio_id": "0199…"},
   "reference": {"word_id": "0199…"},
@@ -327,7 +328,7 @@ buddybird-api는 `audio.parrot_detected` 결과에서 `is_parrot`이 true인 소
 - `session_id`, `target.audio_id`, `reference.word_id`: 요청 값을 그대로 돌려준다. buddybird-api는 `session_id`로 세션 리포트를 갱신한다
 - `judgment.status`: `ok` 또는 `no_reference`. `no_reference`는 풀과 기준음성이 모두 없을 때다
 - `judgment.is_success`: 성공 여부. `score`로 다시 계산하지 않는다
-- `judgment.score`: 비발화 앵무새 소리 대비 백분위, 0~1. 실패한 소리도 0.9 이상이 흔하므로 그대로 사용자에게 보여주지 않는다. `status`가 `no_reference`이면 null
+- `judgment.score`: 비발화 앵무새 소리 대비 백분위를 앱 표시용으로 변환한 점수, 0~1. 판정 임계값이 0.6에 대응한다. `status`가 `no_reference`이면 null
 - `judgment.n_own`, `judgment.n_fill`, `judgment.set_size`: 비교 세트에 들어간 기준음성 수, 풀에서 채운 녹음 수, 둘의 합
 - `model_version`: 이미지를 빌드할 때 정한 모사 판정 모델 버전. buddybird-api가 `mimic_judgments.model_version`에 저장한다
 - 판정할 때마다 `모사 판정 결과; audio_id=<id> word_id=<id> status=<값> ... n_own=<값> n_fill=<값> set_size=<값>`을 INFO 로그로 남기고, 같은 값을 Sentry span 속성으로 남긴다
