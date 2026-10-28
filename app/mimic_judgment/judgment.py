@@ -6,7 +6,7 @@ from typing import Any
 
 import boto3
 
-from app import config
+from app import config, display_score
 from app.mimic_judgment.config import MODEL_VERSION
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,9 @@ def load_model() -> Any:
 
     model.encoder.load()
 
-    logger.info("모사 판정 모델 로드 완료; version=%s threshold=%.4f", MODEL_VERSION, bundle.threshold)
+    logger.info(
+        "모사 판정 모델 로드 완료; version=%s threshold=%.4f", MODEL_VERSION, display_score.mimic(bundle.threshold)
+    )
 
     return model
 

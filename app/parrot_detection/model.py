@@ -5,6 +5,7 @@ import numpy as np
 import onnxruntime as ort
 import soxr
 
+from app import display_score
 from app.parrot_detection.config import MODEL_VERSION
 
 logger = logging.getLogger(__name__)
@@ -16,10 +17,9 @@ class ParrotDetectionModel:
     def __init__(self) -> None:
         self._bundle = joblib.load("/var/task/models/gate.joblib")
         self._session = ort.InferenceSession("/var/task/models/perch_embedding.onnx")
+        self._threshold = display_score.parrot(self._bundle["threshold"])
 
-        logger.info(
-            "앵무새 소리 판별 모델 로드 완료; version=%s threshold=%.4f", MODEL_VERSION, self._bundle["threshold"]
-        )
+        logger.info("앵무새 소리 판별 모델 로드 완료; version=%s threshold=%.4f", MODEL_VERSION, self._threshold)
 
     def predict(self, audio: np.ndarray, sample_rate: int) -> tuple[float, bool]:
         if sample_rate != _SAMPLE_RATE:
@@ -44,6 +44,6 @@ class ParrotDetectionModel:
 
         embeddings = self._session.run(["embedding"], {"inputs": windows})[0]
         embedding = np.asarray(embeddings.mean(axis=0), dtype=np.float32)
-        score = float(self._bundle["pipeline"].predict_proba(embedding.reshape(1, -1))[0, 1])
+        score = display_score.parrot(float(self._bundle["pipeline"].predict_proba(embedding.reshape(1, -1))[0, 1]))
 
-        return score, score >= self._bundle["threshold"]
+        return score, score >= self._threshold
