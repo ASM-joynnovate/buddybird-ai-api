@@ -8,8 +8,8 @@ os.environ.update(
     AWS_DEFAULT_REGION="ap-northeast-2",
     S3_BUCKET="bucket",
     SQS_JUDGMENT_RESULT_QUEUE_URL="http://sqs/result",
-    MIMIC_JUDGMENT_MODEL_VERSION="parrot-mimicry-judgment@v1.0.0",
-    PARROT_DETECTION_MODEL_VERSION="parrot-sound-gate@v2.0.0",
+    MIMIC_JUDGMENT_MODEL_VERSION="parrot-mimicry-judgment@v1.0.1",
+    PARROT_DETECTION_MODEL_VERSION="parrot-sound-gate@v2.0.1",
 )
 
 

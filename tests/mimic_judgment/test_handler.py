@@ -35,7 +35,7 @@ def record(message_id: str, object_keys: list[str]) -> dict[str, Any]:
     [
         (
             ["r/1.m4a", "r/2.wav"],
-            {"status": "ok", "is_success": True, "score": 0.995, "n_own": 2, "n_fill": 18, "set_size": 20},
+            {"status": "ok", "is_success": True, "score": 0.7647059999999968, "n_own": 2, "n_fill": 18, "set_size": 20},
         ),
         (
             [],
@@ -57,7 +57,7 @@ def test_judgment_is_published_with_target_and_reference(
 
     assert body["type"] == "audio.mimic_judged"
     assert body["session_id"] == "session-1"
-    assert body["model_version"] == "parrot-mimicry-judgment@v1.0.0"
+    assert body["model_version"] == "parrot-mimicry-judgment@v1.0.1"
     assert body["target"] == {"audio_id": "s1"}
     assert body["reference"] == {"word_id": "w-1"}
     assert body["judgment"] == judgment

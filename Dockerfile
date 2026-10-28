@@ -3,11 +3,11 @@ ARG LAMBDA_BASE_IMAGE=public.ecr.aws/lambda/python:3.12-arm64@sha256:9672c8fa29a
 
 # 앵무새 소리 판별 모델 버전
 ARG PARROT_DETECTION_MODEL_REVISION=1682b03ba43a436524ea83b74447b5b6ddd35f70
-ARG PARROT_DETECTION_MODEL_VERSION=parrot-sound-gate@v2.0.0
+ARG PARROT_DETECTION_MODEL_VERSION=parrot-sound-gate@v2.0.1
 
 # 모사 판정 모델 버전
 ARG MIMIC_JUDGMENT_MODEL_REVISION=b1ba78905267833282c3aceaeb9f0ec02f26f386
-ARG MIMIC_JUDGMENT_MODEL_VERSION=parrot-mimicry-judgment@v1.0.0
+ARG MIMIC_JUDGMENT_MODEL_VERSION=parrot-mimicry-judgment@v1.0.1
 
 # 빌드 stage가 사용하는 uv 설치
 FROM ${LAMBDA_BASE_IMAGE} AS uv
