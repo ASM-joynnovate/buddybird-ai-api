@@ -8,24 +8,19 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency: deploy-${{ github.ref_name }}
 
 jobs:
   deploy:
-    runs-on: ubuntu-24.04-arm
-    strategy:
-      fail-fast: false
-      matrix:
-        function:
-          - parrot-detection
-          - mimic-judgment
+    runs-on: ubuntu-latest
     env:
-      ECR_REPOSITORY: jn-buddybird-${{ matrix.function }}
       ENVIRONMENT: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
-      FUNCTION_NAME: jn-buddybird-${{ matrix.function }}-${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      WORKER_NAME: jn-buddybird-audio-ai-${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      IMAGE_REGISTRY: registry.cloudflare.com/0c4453da6d81adec04df8132e00660c4
+      IMAGES: parrot-detection mimic-judgment
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      CLOUDFLARE_ACCOUNT_ID: 0c4453da6d81adec04df8132e00660c4
     steps:
       - name: checkout
         uses: actions/checkout@v7
@@ -43,7 +38,7 @@ jobs:
         continue-on-error: true
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          title: 🚀 ${{ env.FUNCTION_NAME }} 배포 시작
+          title: 🚀 ${{ env.WORKER_NAME }} 배포 시작
           fields: |
             환경=${{ env.ENVIRONMENT }}
             버전=${{ steps.version.outputs.version }}
@@ -54,56 +49,110 @@ jobs:
             변경 내역=${{ github.event.compare }}
           commit-range: ${{ github.event.before }}..${{ github.sha }}
 
-      - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: arn:aws:iam::198252712951:role/jn-buddybird-audio-ai-deploy
-          aws-region: ap-northeast-2
+      - name: install wrangler
+        id: wrangler
+        working-directory: worker
+        run: npm ci
 
-      - name: login to ecr
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: login to registry
+        id: registry
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          credentials=$(npx wrangler containers registries credentials --pull --json)
+          jq -r .password <<< "$credentials" | docker login --password-stdin --username "$(jq -r .username <<< "$credentials")" registry.cloudflare.com
 
-      - name: resolve image uri
-        id: image
-        run: echo "uri=${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
-
-      - name: ensure version is not in ecr
+      - name: ensure version is not in registry
         id: check-new-version
         if: github.ref_name == 'dev'
-        run: "! aws ecr describe-images --repository-name $ECR_REPOSITORY --image-ids imageTag=${{ steps.version.outputs.version }}"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for image in $IMAGES; do
+            if docker manifest inspect "$IMAGE_REGISTRY/jn-buddybird-$image:$VERSION"; then
+              exit 1
+            fi
+          done
 
-      - name: ensure version is in ecr
+      - name: ensure version is in registry
         id: check-image-exists
         if: github.ref_name == 'main'
-        run: aws ecr describe-images --repository-name $ECR_REPOSITORY --image-ids imageTag=${{ steps.version.outputs.version }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for image in $IMAGES; do
+            docker manifest inspect "$IMAGE_REGISTRY/jn-buddybird-$image:$VERSION"
+          done
 
       - name: set up buildx
         id: buildx
         if: github.ref_name == 'dev'
         uses: docker/setup-buildx-action@v4
 
-      - name: build and push image
-        id: build
+      - name: build parrot-detection image
+        id: build-parrot-detection
         if: github.ref_name == 'dev'
         uses: docker/build-push-action@v7
         with:
           context: .
-          target: ${{ matrix.function }}
-          platforms: linux/arm64
-          push: true
-          tags: ${{ steps.image.outputs.uri }}
+          file: Dockerfile.parrot-detection
+          platforms: linux/amd64
+          load: true
+          tags: jn-buddybird-parrot-detection:${{ steps.version.outputs.version }}
           provenance: false
-          cache-from: type=gha,scope=${{ matrix.function }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.function }}
+          cache-from: type=gha,scope=parrot-detection
+          cache-to: type=gha,mode=max,scope=parrot-detection
 
-      - name: update function code
+      - name: build mimic-judgment image
+        id: build-mimic-judgment
+        if: github.ref_name == 'dev'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.mimic-judgment
+          platforms: linux/amd64
+          load: true
+          tags: jn-buddybird-mimic-judgment:${{ steps.version.outputs.version }}
+          provenance: false
+          cache-from: type=gha,scope=mimic-judgment
+          cache-to: type=gha,mode=max,scope=mimic-judgment
+
+      - name: push images
+        id: push
+        if: github.ref_name == 'dev'
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for image in $IMAGES; do
+            npx wrangler containers push "jn-buddybird-$image:$VERSION"
+          done
+
+      - name: resolve image digests
+        id: digest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          images='{}'
+          for image in $IMAGES; do
+            repository="$IMAGE_REGISTRY/jn-buddybird-$image"
+            digest=$(docker manifest inspect -v "$repository:$VERSION" | jq -er .Descriptor.digest)
+            images=$(jq -c --arg name "$image" --arg image "$repository@$digest" '.[$name] = {image: $image}' <<< "$images")
+          done
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+
+      - name: deploy worker
         id: deploy
-        run: aws lambda update-function-code --function-name "$FUNCTION_NAME" --image-uri "${{ steps.image.outputs.uri }}"
-
-      - name: wait for function update
-        id: wait
-        run: aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IMAGE_SOURCES: ${{ steps.digest.outputs.images }}
+        run: |
+          jq --arg env "$ENVIRONMENT" --argjson images "$IMAGE_SOURCES" '.env[$env].containers[].images |= with_entries(.value = $images[.key])' wrangler.jsonc > wrangler.json
+          mv wrangler.json wrangler.jsonc
+          npx wrangler deploy --env "$ENVIRONMENT"
 
       - name: collect result
         id: result
@@ -122,7 +171,7 @@ jobs:
         continue-on-error: true
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          title: "${{ job.status == 'success' && '✅' || job.status == 'failure' && '❌' || '⚠️' }} ${{ env.FUNCTION_NAME }} 배포 ${{ job.status == 'success' && '성공' || job.status == 'failure' && '실패' || '취소' }}"
+          title: "${{ job.status == 'success' && '✅' || job.status == 'failure' && '❌' || '⚠️' }} ${{ env.WORKER_NAME }} 배포 ${{ job.status == 'success' && '성공' || job.status == 'failure' && '실패' || '취소' }}"
           fields: |
             환경=${{ env.ENVIRONMENT }}
             버전=${{ steps.version.outputs.version }}

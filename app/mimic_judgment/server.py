@@ -5,14 +5,11 @@ from typing import Any
 
 import sentry_sdk
 
-from app import config, display_score, sentry, sqs
+from app import display_score, server
 from app.mimic_judgment.config import MODEL_VERSION
 from app.mimic_judgment.judgment import judge, load_model
 
 logger = logging.getLogger(__name__)
-
-logging.getLogger().setLevel(config.LOG_LEVEL)
-sentry.init()
 
 _model = load_model()
 
@@ -56,8 +53,5 @@ def judge_mimic(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def handler(event: dict[str, Any], _context: object) -> dict[str, Any]:
-    try:
-        return sqs.process_batch(event["Records"], judge_mimic, name="모사 판정", max_workers=1)
-    finally:
-        sentry_sdk.flush()
+if __name__ == "__main__":
+    server.serve(judge_mimic, name="모사 판정")

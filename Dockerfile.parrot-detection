@@ -1,0 +1,56 @@
+ARG BASE_IMAGE=python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b
+
+ARG PARROT_DETECTION_MODEL_REVISION=1682b03ba43a436524ea83b74447b5b6ddd35f70
+ARG PARROT_DETECTION_MODEL_VERSION=parrot-sound-gate@v2.0.1
+
+FROM ${BASE_IMAGE} AS uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+WORKDIR /build
+
+RUN pip install --no-cache-dir uv==0.12.10
+
+FROM uv AS requirements
+
+COPY pyproject.toml uv.lock ./
+
+RUN uv export --frozen --no-default-groups --group parrot-detection --no-emit-project -o parrot-detection.txt
+RUN uv export --frozen --only-group model-download --no-emit-project -o model-download.txt
+
+FROM uv AS packages
+
+COPY --from=requirements /build/parrot-detection.txt ./
+RUN uv pip install --target /opt/packages -r parrot-detection.txt
+
+FROM uv AS model
+
+COPY --from=requirements /build/model-download.txt ./
+RUN uv pip install --system -r model-download.txt
+
+ARG PARROT_DETECTION_MODEL_REVISION
+
+COPY scripts/download_parrot_detection_model.py ./
+RUN python download_parrot_detection_model.py
+
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+COPY --from=packages /opt/packages ./
+COPY --from=model /app/models ./models
+
+ARG PARROT_DETECTION_MODEL_VERSION
+ENV PARROT_DETECTION_MODEL_VERSION=${PARROT_DETECTION_MODEL_VERSION}
+
+COPY pyproject.toml ./
+COPY app ./app
+RUN python -m compileall -q app
+
+USER nobody
+
+EXPOSE 8080
+
+CMD ["python", "-m", "app.parrot_detection.server"]

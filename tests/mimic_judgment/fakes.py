@@ -27,7 +27,7 @@ class FakeMimicJudgmentModel:
         )
 
 
-class FakeMimicJudgmentS3:
+class FakeMimicJudgmentR2:
     def download_file(self, _bucket: str, key: str, filename: str) -> None:
         if key.startswith("missing/"):
             raise KeyError(key)

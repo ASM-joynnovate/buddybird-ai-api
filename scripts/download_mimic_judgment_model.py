@@ -7,8 +7,8 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
-model_dir = Path("/var/task/models/mimic")
-encoder_dir = Path("/var/task/models/contentvec")
+model_dir = Path("/app/models/mimic")
+encoder_dir = Path("/app/models/contentvec")
 
 with tempfile.TemporaryDirectory() as cache_dir:
     # cache의 LFS 파일 권한 0400을 복사하지 않음

@@ -15,8 +15,8 @@ _SAMPLE_RATE = 32_000
 
 class ParrotDetectionModel:
     def __init__(self) -> None:
-        self._bundle = joblib.load("/var/task/models/gate.joblib")
-        self._session = ort.InferenceSession("/var/task/models/perch_embedding.onnx")
+        self._bundle = joblib.load("/app/models/gate.joblib")
+        self._session = ort.InferenceSession("/app/models/perch_embedding.onnx")
         self._threshold = display_score.parrot(self._bundle["threshold"])
 
         logger.info("앵무새 소리 판별 모델 로드 완료; version=%s threshold=%.4f", MODEL_VERSION, self._threshold)

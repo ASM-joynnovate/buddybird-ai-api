@@ -1,0 +1,178 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "jn-buddybird-audio-ai",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-11-23",
+	"workers_dev": false,
+	"observability": {
+		"enabled": true
+	},
+	"exports": {
+		"ParrotDetection": {
+			"type": "durable-object",
+			"storage": "sqlite"
+		},
+		"MimicJudgment": {
+			"type": "durable-object",
+			"storage": "sqlite"
+		}
+	},
+	"env": {
+		"dev": {
+			"name": "jn-buddybird-audio-ai-dev",
+			"containers": [
+				{
+					"class_name": "ParrotDetection",
+					"scheduling_policy": "durable_object",
+					"images": {
+						"parrot-detection": {
+							"dockerfile": "../Dockerfile.parrot-detection",
+							"build_context": ".."
+						}
+					},
+					"observability": {
+						"enabled": true
+					}
+				},
+				{
+					"class_name": "MimicJudgment",
+					"scheduling_policy": "durable_object",
+					"images": {
+						"mimic-judgment": {
+							"dockerfile": "../Dockerfile.mimic-judgment",
+							"build_context": ".."
+						}
+					},
+					"observability": {
+						"enabled": true
+					}
+				}
+			],
+			"durable_objects": {
+				"bindings": [
+					{
+						"name": "PARROT_DETECTION",
+						"class_name": "ParrotDetection"
+					},
+					{
+						"name": "MIMIC_JUDGMENT",
+						"class_name": "MimicJudgment"
+					}
+				]
+			},
+			"queues": {
+				"producers": [
+					{
+						"binding": "JUDGMENT_RESULT",
+						"queue": "jn-buddybird-dev-judgment-result"
+					}
+				],
+				"consumers": [
+					{
+						"queue": "jn-buddybird-dev-parrot-sound-detection",
+						"max_batch_size": 10,
+						"max_batch_timeout": 0,
+						"max_concurrency": 1,
+						"max_retries": 4,
+						"retry_delay": 360,
+						"dead_letter_queue": "jn-buddybird-dev-parrot-sound-detection-dlq"
+					},
+					{
+						"queue": "jn-buddybird-dev-mimicry-judgment",
+						"max_batch_size": 1,
+						"max_concurrency": 10,
+						"max_retries": 4,
+						"retry_delay": 1800,
+						"dead_letter_queue": "jn-buddybird-dev-mimicry-judgment-dlq"
+					}
+				]
+			},
+			"vars": {
+				"ENV": "dev",
+				"STORAGE_ENDPOINT_URL": "https://0c4453da6d81adec04df8132e00660c4.r2.cloudflarestorage.com",
+				"STORAGE_BUCKET_NAME": "jn-buddybird-data-dev"
+			},
+			"secrets": {
+				"required": ["SENTRY_DSN", "STORAGE_ACCESS_KEY", "STORAGE_SECRET_KEY"]
+			}
+		},
+		"prod": {
+			"name": "jn-buddybird-audio-ai-prod",
+			"containers": [
+				{
+					"class_name": "ParrotDetection",
+					"scheduling_policy": "durable_object",
+					"images": {
+						"parrot-detection": {
+							"dockerfile": "../Dockerfile.parrot-detection",
+							"build_context": ".."
+						}
+					},
+					"observability": {
+						"enabled": true
+					}
+				},
+				{
+					"class_name": "MimicJudgment",
+					"scheduling_policy": "durable_object",
+					"images": {
+						"mimic-judgment": {
+							"dockerfile": "../Dockerfile.mimic-judgment",
+							"build_context": ".."
+						}
+					},
+					"observability": {
+						"enabled": true
+					}
+				}
+			],
+			"durable_objects": {
+				"bindings": [
+					{
+						"name": "PARROT_DETECTION",
+						"class_name": "ParrotDetection"
+					},
+					{
+						"name": "MIMIC_JUDGMENT",
+						"class_name": "MimicJudgment"
+					}
+				]
+			},
+			"queues": {
+				"producers": [
+					{
+						"binding": "JUDGMENT_RESULT",
+						"queue": "jn-buddybird-prod-judgment-result"
+					}
+				],
+				"consumers": [
+					{
+						"queue": "jn-buddybird-prod-parrot-sound-detection",
+						"max_batch_size": 10,
+						"max_batch_timeout": 0,
+						"max_concurrency": 1,
+						"max_retries": 4,
+						"retry_delay": 360,
+						"dead_letter_queue": "jn-buddybird-prod-parrot-sound-detection-dlq"
+					},
+					{
+						"queue": "jn-buddybird-prod-mimicry-judgment",
+						"max_batch_size": 1,
+						"max_concurrency": 10,
+						"max_retries": 4,
+						"retry_delay": 1800,
+						"dead_letter_queue": "jn-buddybird-prod-mimicry-judgment-dlq"
+					}
+				]
+			},
+			"vars": {
+				"ENV": "prod",
+				"STORAGE_ENDPOINT_URL": "https://0c4453da6d81adec04df8132e00660c4.r2.cloudflarestorage.com",
+				"STORAGE_BUCKET_NAME": "jn-buddybird-data-prod"
+			},
+			"secrets": {
+				"required": ["SENTRY_DSN", "STORAGE_ACCESS_KEY", "STORAGE_SECRET_KEY"]
+			}
+		}
+	}
+}

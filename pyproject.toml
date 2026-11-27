@@ -1,7 +1,7 @@
 [project]
 name = "buddybird-audio-ai"
 version = "1.5.0"
-description = "BuddyBird parrot detection and mimic judgment Lambda functions"
+description = "BuddyBird parrot detection and mimic judgment containers"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "boto3>=1.35.0",
@@ -92,5 +92,5 @@ strict = true
 files = ["app", "scripts", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["boto3.*", "huggingface_hub.*", "joblib.*", "judge.*", "onnx.*", "onnxruntime.*", "soundfile.*", "soxr.*"]
+module = ["boto3.*", "botocore.*", "huggingface_hub.*", "joblib.*", "judge.*", "onnx.*", "onnxruntime.*", "soundfile.*", "soxr.*"]
 ignore_missing_imports = true

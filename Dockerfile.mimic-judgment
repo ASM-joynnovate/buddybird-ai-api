@@ -1,0 +1,62 @@
+ARG BASE_IMAGE=python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b
+
+ARG MIMIC_JUDGMENT_MODEL_REVISION=b1ba78905267833282c3aceaeb9f0ec02f26f386
+ARG MIMIC_JUDGMENT_MODEL_VERSION=parrot-mimicry-judgment@v1.0.1
+
+FROM ${BASE_IMAGE} AS uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+WORKDIR /build
+
+RUN pip install --no-cache-dir uv==0.12.10
+
+FROM uv AS requirements
+
+COPY pyproject.toml uv.lock ./
+
+RUN uv export --frozen --no-default-groups --group mimic-judgment --no-emit-project --emit-index-url -o mimic-judgment.txt
+RUN uv export --frozen --only-group model-download --no-emit-project -o model-download.txt
+
+FROM uv AS packages
+
+COPY --from=requirements /build/mimic-judgment.txt ./
+RUN uv pip install --index-strategy unsafe-best-match --target /opt/packages -r mimic-judgment.txt
+
+FROM uv AS model
+
+COPY --from=requirements /build/model-download.txt ./
+RUN uv pip install --system -r model-download.txt
+
+ARG MIMIC_JUDGMENT_MODEL_REVISION
+
+COPY scripts/download_mimic_judgment_model.py ./
+RUN python download_mimic_judgment_model.py
+
+FROM ${BASE_IMAGE}
+
+ENV HF_HUB_OFFLINE=1 \
+    NUMBA_CACHE_DIR=/tmp/numba-cache
+
+WORKDIR /app
+
+COPY --from=packages /opt/packages ./
+
+RUN ln -s "$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" /usr/local/bin/ffmpeg
+
+COPY --from=model /app/models ./models
+
+ARG MIMIC_JUDGMENT_MODEL_VERSION
+ENV MIMIC_JUDGMENT_MODEL_VERSION=${MIMIC_JUDGMENT_MODEL_VERSION}
+
+COPY pyproject.toml ./
+COPY app ./app
+RUN python -m compileall -q app
+
+USER nobody
+
+EXPOSE 8080
+
+CMD ["python", "-m", "app.mimic_judgment.server"]
