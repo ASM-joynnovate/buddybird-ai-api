@@ -5,15 +5,12 @@ from typing import Any
 
 import sentry_sdk
 
-from app import config, sentry, sqs
+from app import server
 from app.parrot_detection.config import MODEL_VERSION
 from app.parrot_detection.detection import detect
 from app.parrot_detection.model import ParrotDetectionModel
 
 logger = logging.getLogger(__name__)
-
-logging.getLogger().setLevel(config.LOG_LEVEL)
-sentry.init()
 
 _model = ParrotDetectionModel()
 
@@ -41,8 +38,5 @@ def detect_parrot(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def handler(event: dict[str, Any], _context: object) -> dict[str, Any]:
-    try:
-        return sqs.process_batch(event["Records"], detect_parrot, name="앵무새 소리 판별", max_workers=4)
-    finally:
-        sentry_sdk.flush()
+if __name__ == "__main__":
+    server.serve(detect_parrot, name="앵무새 소리 판별")

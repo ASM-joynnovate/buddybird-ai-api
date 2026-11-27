@@ -5,15 +5,23 @@ from pathlib import Path
 from typing import Any
 
 import boto3
+from botocore.config import Config
 
 from app import config, display_score
 from app.mimic_judgment.config import MODEL_VERSION
 
 logger = logging.getLogger(__name__)
 
-_MODEL_DIR = Path("/var/task/models/mimic")
+_MODEL_DIR = Path("/app/models/mimic")
 
-_s3 = boto3.client("s3")
+_r2 = boto3.client(
+    "s3",
+    endpoint_url=config.STORAGE_ENDPOINT_URL,
+    aws_access_key_id=config.STORAGE_ACCESS_KEY,
+    aws_secret_access_key=config.STORAGE_SECRET_KEY,
+    region_name="auto",
+    config=Config(response_checksum_validation="when_required"),
+)
 
 
 def load_model() -> Any:
@@ -25,7 +33,7 @@ def load_model() -> Any:
     model = MimicryJudge(
         bundle,
         ContentVecEncoder(
-            repo_id="/var/task/models/contentvec",
+            repo_id="/app/models/contentvec",
             layer=int(bundle.manifest["model"]["layer"]),
             weights_filename=None,
             weights_sha256=None,
@@ -48,6 +56,6 @@ def judge(model: Any, *, target_object_key: str, word_name: str, reference_objec
         paths = [Path(directory) / f"{index}{Path(object_key).suffix}" for index, object_key in enumerate(object_keys)]
 
         for object_key, path in zip(object_keys, paths, strict=True):
-            _s3.download_file(config.S3_BUCKET, object_key, str(path))
+            _r2.download_file(config.STORAGE_BUCKET_NAME, object_key, str(path))
 
         return model.judge_audio(paths[0], word_name, paths[1:])

@@ -9,7 +9,7 @@ import onnx.utils
 from huggingface_hub import hf_hub_download
 
 revision = os.environ["PARROT_DETECTION_MODEL_REVISION"]
-models = Path("/var/task/models")
+models = Path("/app/models")
 
 models.mkdir(parents=True)
 
