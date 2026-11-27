@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.5.0...v1.6.0) (2026-11-27)
+
+
+### Features
+
+* 판정 컨테이너를 Cloudflare로 이전 ([48e73ca](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/48e73ca9827c4edd85b0c51475bcb6feacf7ad6d))
+* 판정 컨테이너를 Cloudflare로 이전 ([49100ac](https://github.com/ASM-joynnovate/buddybird-ai-api/commit/49100ac0decda16c9953a01a91414c2921787b10))
+
 ## [1.5.0](https://github.com/ASM-joynnovate/buddybird-ai-api/compare/v1.4.1...v1.5.0) (2026-10-28)
 
 
