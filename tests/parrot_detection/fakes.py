@@ -31,7 +31,7 @@ SOUNDS = {
 }
 
 
-class FakeParrotDetectionS3:
+class FakeParrotDetectionR2:
     def get_object(self, **params: str) -> dict[str, io.BytesIO]:
         body = io.BytesIO()
 

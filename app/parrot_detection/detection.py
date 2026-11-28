@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import boto3
 import numpy as np
 import soundfile
+from botocore.config import Config
 
 from app import config
 from app.parrot_detection.calls import count_chirps, detect_calls
@@ -13,7 +14,14 @@ from app.parrot_detection.model import ParrotDetectionModel
 
 logger = logging.getLogger(__name__)
 
-_s3 = boto3.client("s3")
+_r2 = boto3.client(
+    "s3",
+    endpoint_url=config.STORAGE_ENDPOINT_URL,
+    aws_access_key_id=config.STORAGE_ACCESS_KEY,
+    aws_secret_access_key=config.STORAGE_SECRET_KEY,
+    region_name="auto",
+    config=Config(response_checksum_validation="when_required"),
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -25,8 +33,8 @@ class ParrotDetection:
 
 
 def detect(model: ParrotDetectionModel, audio_id: str, object_key: str) -> ParrotDetection:
-    s3_object = _s3.get_object(Bucket=config.S3_BUCKET, Key=object_key)
-    audio, sample_rate = soundfile.read(io.BytesIO(s3_object["Body"].read()), dtype="float32")
+    response = _r2.get_object(Bucket=config.STORAGE_BUCKET_NAME, Key=object_key)
+    audio, sample_rate = soundfile.read(io.BytesIO(response["Body"].read()), dtype="float32")
 
     if audio.ndim == 2:
         audio = audio.mean(axis=1)
